@@ -51,7 +51,7 @@ tiling:
 
 feature_extraction:
   # Deep learning feature encoder (e.g., 'rn50', 'hipt', 'uni')
-  model: rn50
+  model: optimus
   
   # Hardware and batching
   batch_size: 64
@@ -68,16 +68,26 @@ feature_extraction:
 task:
   # Name of the classification task (e.g., 'metastasis', 'subtype')
   name: metastasis
-  
   # Type of formulation: 'binary', 'multiclass', 'survival'
   type: binary
+
+# --- Dataset Splitting ----------------------------------------------------------
+split:
+  # Mode: 'train_test' | 'train_val_test'
+  type: train_test
+
+  # Proportions (must sum to 1.0)
+  train_size: 0.8       # used by both modes
+  val_size: 0.1         # only used in train_val_test mode
+  test_size: 0.2        # used by both modes
+
+  stratified: true      # Stratify splits by label column
+  random_seed: 42
 
 mil:
   # The Multiple Instance Learning architecture (e.g., 'abmil', 'clam_sb', 'transmil')
   model: abmil
-  
   # Dimensionality of the feature vectors produced by the encoder
-  # (e.g., 1024 for ResNet50, 384 for HIPT, 1024 for UNI)
   encoding_size: 1024
 
 experiment:

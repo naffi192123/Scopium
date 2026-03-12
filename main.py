@@ -7,12 +7,13 @@ from pipelines.preprocess import run_segment_and_patch
 from pipelines.debug import command_debug_segmentation, command_extract_tile
 from pipelines.extract import command_extract
 from pipelines.analyse_annotations import run_analysis
+from pipelines.split import command_split
 from utils.logger import setup_logger
 import pandas as pd
 
 def parse_args():
     parser = argparse.ArgumentParser(description="WSI Classification Framework")
-    parser.add_argument("command", choices=["process", "stats", "segment", "debug-segmentation", "extract-tile", "extract", "analyse", "train", "evaluate", "heatmap"],
+    parser.add_argument("command", choices=["process", "stats", "segment", "debug-segmentation", "extract-tile", "extract", "analyse", "split", "train", "evaluate", "heatmap"],
                         help="Command to execute")
     parser.add_argument("--config", type=str, default="config/config.yaml", help="Path to the config file")
     parser.add_argument("--csv", type=str, default=None, help="[analyse] Path to annotation CSV (auto-detect if omitted)")
@@ -126,6 +127,8 @@ def main():
         command_extract(config, dirs_dict, logger)
     elif args.command == "analyse":
         run_analysis(args.config, csv_path=args.csv)
+    elif args.command == "split":
+        command_split(config, dirs_dict, logger, csv_path=args.csv)
     elif args.command == "train":
         logger.warning("Train command not yet implemented.")
     elif args.command == "evaluate":
