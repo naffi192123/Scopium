@@ -27,33 +27,38 @@ Dynamic dataset loading and results structuring driven by `config.yaml`.
 
 ## Project Architecture
 ```text
-wsi_classification/
-├── config.yaml             # Main configuration execution
+wsi_framework/
+├── config/                 # YAML configuration files
+│   └── config.yaml         # Main pipeline configuration execution
+├── core/                   # Core pipeline modules
+│   ├── __init__.py
+│   ├── wsi_reader.py       # Reads WSI, extracts metadata, thumbnails
+│   ├── segmenter.py        # Tissue segmentation (Otsu, HSV, adaptive)
+│   ├── patcher.py          # Patch coordinate extraction from segments
+│   └── extractor.py        # Feature extraction (CNNs/Foundation Models)
+├── datasets/               # Dataset handling
+│   ├── __init__.py
+│   ├── slide_dataset.py    # PyTorch dataset for slide coordinate loading
+│   └── split_manager.py    # Cross-validation and split generation
+├── models/                 # Deep learning models
+│   ├── __init__.py
+│   ├── feature_models.py   # Implementations of ResNet, HIPT, UNI, etc.
+│   └── mil_models.py       # ABMIL, CLAM, TransMIL, etc.
+├── pipelines/              # Orchestration scripts for CLI commands
+│   ├── __init__.py
+│   ├── preprocess.py       # Thumbnails, Metadata, Segmentation, Patching
+│   ├── train.py            # Model training and validation loops
+│   ├── evaluate.py         # Evaluation and metrics
+│   └── visualize.py        # Heatmap reconstruction
+├── utils/                  # Helper utilities
+│   ├── __init__.py
+│   ├── config.py           # YAML parsing and directory initialization
+│   └── metrics.py          # AUC, F1, Accuracy tracking
+├── docs/                   # Documentation
+│   ├── setup_and_usage.md
+│   └── architecture.md     # This file
 ├── main.py                 # Unified Command-Line Interface (CLI)
-├── README.md               # Quick start documentation
-├── requirements.txt        # Dependencies
-├── docs/                   # Full documentation suite
-├── experiments/            # Storage for experiment sweeps
-└── wsi_lib/                # Core pipeline modules
-    ├── config.py           # Config loader and dir validator
-    ├── logger.py           # Logging utility
-    ├── utils.py            # General utilities
-    ├── preprocessing/      # WSI reader, thumbnails, global metadata
-    │   ├── thumbnail.py
-    │   └── metadata.py
-    ├── tiling/             # Patch extraction and tissue segmentation
-    │   └── tiler.py
-    ├── features/           # Inference encoders (CNNs/PfMs)
-    │   ├── extractor.py
-    │   ├── models.py
-    │   └── transforms.py
-    ├── mil/                # Multiple Instance Learning backend
-    │   ├── dataset.py      
-    │   ├── evaluation.py
-    │   └── trainer.py
-    ├── models/             # PyTorch MIL model architectures
-    └── visualization/      # Attention heatmaps and ROCs
-        └── heatmap.py
+└── requirements.txt        # Python dependencies
 ```
 
 ## Environment Setup
@@ -62,7 +67,7 @@ wsi_classification/
 ```bash
 # 1. Open Anaconda Prompt
 # 2. Navigate to the project directory
-cd /path/to/wsi_classification
+cd /path/to/wsi_framework
 
 # 3. Create the conda environment
 conda create -y -n dl_py39 python=3.9
@@ -96,7 +101,7 @@ pip install -r requirements.txt
 Run the following testing commands to verify WSI reading and metadata extraction.
 
 **1. Copy sample WSIs**
-Copy 1-2 Sample `.svs` files into `wsi_classification/dataset/slides/`.
+Copy 1-2 Sample `.svs` files into `wsi_framework/dataset/slides/`.
 
 **2. Run the process command**
 ```bash
@@ -104,4 +109,4 @@ python main.py process
 ```
 
 **3. Verify Output**
-Check `wsi_classification/results/thumbnails/` and `wsi_classification/results/metadata/` for generated `.png` thumbnails and `.json` metadata files.
+Check `wsi_framework/results/thumbnails/` and `wsi_framework/results/metadata/` for generated `.png` thumbnails and `.json` metadata files.

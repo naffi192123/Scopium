@@ -1,8 +1,8 @@
 import argparse
 import os
 import glob
-from wsi_lib.config import load_config, setup_directories
-from wsi_lib.preprocessing.thumbnail import process_wsi
+from utils.config import load_config, setup_directories
+from core.wsi_reader import process_wsi
 
 def parse_args():
     parser = argparse.ArgumentParser(description="WSI Classification Framework")

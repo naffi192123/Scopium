@@ -13,8 +13,8 @@ python main.py process --config config.yaml
 ```
 
 Currently implemented modules:
-- Reading WSIs (`wsi_lib.preprocessing.thumbnail`)
-- Extracting whole-slide metadata (`wsi_lib.preprocessing.thumbnail`)
-- Thumbnail Generation (`wsi_lib.preprocessing.thumbnail`)
+- Reading WSIs (`core.wsi_reader`)
+- Extracting whole-slide metadata (`core.wsi_reader`)
+- Thumbnail Generation (`core.wsi_reader`)
 
 See `docs/setup_and_usage.md` for environment setup instructions and full documentation.
