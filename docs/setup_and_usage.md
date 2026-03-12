@@ -93,7 +93,7 @@ conda create -y -n dl_py39 python=3.9
 conda activate dl_py39
 
 # 4. Navigate to project and install requirements
-cd /path/to/wsi_classification
+cd /path/to/wsi_framework
 pip install -r requirements.txt
 ```
 

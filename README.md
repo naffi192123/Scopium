@@ -9,7 +9,7 @@ Run via the centralized CLI `main.py`:
 ```bash
 python main.py --help
 
-python main.py process --config config.yaml
+python main.py process --config config/config.yaml
 ```
 
 Currently implemented modules:
