@@ -76,7 +76,8 @@ def setup_directories(config):
         'patches': os.path.join('patches', patch_str),
         'features': os.path.join('features', feature_str),
         'experiments': 'experiments',
-        'heatmaps': 'heatmaps'
+        'heatmaps': 'heatmaps',
+        'debug': 'debug'
     }
     
     dirs_dict = {}

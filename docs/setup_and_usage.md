@@ -122,3 +122,35 @@ It supports both `sequential` and `parallel` execution via the config `tiling.mo
 python main.py segment --config config/config.yaml
 ```
 **Output:** `results/masks/*_mask.png` and `results/patches/patch512_step512_level0/*.h5`
+
+### 4. Debugging Patch Extraction
+Because tiles are extracted only from segmented tissue regions and stored as coordinates in `.h5` files, it is crucial to verify that the extraction logic is capturing the right amount of tissue. You can use the following commands to debug your extraction pipeline.
+
+**Visualize Segmented Tiles on Thumbnail (`debug-segmentation`)**
+This reconstructs an approximate tissue coverage map directly on the WSI thumbnail by plotting every single extracted patch coordinate as a green bounding box.
+```bash
+python main.py debug-segmentation --config config/config.yaml
+```
+**Output:** `results/debug/segmented_tiles_thumbnail_*.png`
+
+**Single Tile Extraction (`extract-tile`)**
+This command selects one tile coordinate from the `.h5` dataset, physically extracts that specific high-resolution tile from the `.svs` file using the tiling parameters, and saves it to disk for manual visual inspection.
+```bash
+python main.py extract-tile --config config/config.yaml
+```
+**Output:** `results/debug/tile_*.png`
+
+### 5. Feature Extraction (`extract`)
+This module maps the previously extracted `.h5` patch coordinates directly to a PyTorch `Dataset` that natively reads high-resolution tiles directly from the WSI memory stream using OpenSlide, allowing deep learning embeddings to be generated without unpacking millions of `.png` files to disk.
+
+It supports configuring multiple sequential data augmentation/normalization transforms entirely from `config.yaml` (`totensor`, `resize_224`, `macenko`, `imagenet`, etc.).
+It also supports over a dozen Baseline CNNs and Pathology Foundation Models (`rn50`, `uni`, `hibou_b`, `virchow`, `provgigapath`, etc.) operating automatically on detected CUDA GPUs.
+
+**To Run Feature Extraction:**
+```bash
+python main.py extract --config config/config.yaml
+```
+
+**Testing Output**
+By default, the framework will create robust subdirectories named after your pipeline (`results/features/patch512_step512_level0__rn50_reinhard-imagenet/...`) to prevent colliding different datasets.
+Features for each slide are saved as PyTorch `.pt` tensors inside the respective `pt_files/` subdirectory.

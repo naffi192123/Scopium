@@ -12,6 +12,8 @@ python main.py --help
 python main.py stats --config config/config.yaml
 python main.py process --config config/config.yaml
 python main.py segment --config config/config.yaml
+python main.py debug-segmentation --config config/config.yaml
+python main.py extract-tile --config config/config.yaml
 ```
 
 Currently implemented modules:
@@ -20,6 +22,7 @@ Currently implemented modules:
 - Thumbnail Generation (`core.wsi_reader`)
 - Tissue Segmentation via HSV/Otsu (`core.segmenter`)
 - Patch Coordinate Extraction & HDF5 saving (`core.patcher`)
+- Debugging Utilities for extraction verification (`pipelines.debug`)
 
 ## Configuration
 The pipeline is entirely driven by `config/config.yaml`.

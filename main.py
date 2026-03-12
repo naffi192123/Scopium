@@ -4,12 +4,14 @@ import glob
 from utils.config import load_config, setup_directories
 from core.wsi_reader import process_wsi, WSIReader
 from pipelines.preprocess import run_segment_and_patch
+from pipelines.debug import command_debug_segmentation, command_extract_tile
+from pipelines.extract import command_extract
 from utils.logger import setup_logger
 import pandas as pd
 
 def parse_args():
     parser = argparse.ArgumentParser(description="WSI Classification Framework")
-    parser.add_argument("command", choices=["process", "stats", "segment", "extract", "train", "evaluate", "heatmap"],
+    parser.add_argument("command", choices=["process", "stats", "segment", "debug-segmentation", "extract-tile", "extract", "train", "evaluate", "heatmap"],
                         help="Command to execute")
     parser.add_argument("--config", type=str, default="config/config.yaml", help="Path to the config file")
     return parser.parse_args()
@@ -114,8 +116,12 @@ def main():
         command_stats(config, logger)
     elif args.command == "segment":
         command_segment(config, dirs_dict, logger)
+    elif args.command == "debug-segmentation":
+        command_debug_segmentation(config, dirs_dict, logger)
+    elif args.command == "extract-tile":
+        command_extract_tile(config, dirs_dict, logger)
     elif args.command == "extract":
-        logger.warning("Extract command not yet implemented.")
+        command_extract(config, dirs_dict, logger)
     elif args.command == "train":
         logger.warning("Train command not yet implemented.")
     elif args.command == "evaluate":

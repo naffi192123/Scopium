@@ -15,21 +15,24 @@ wsi_framework/
 │   └── extractor.py        # Feature extraction (CNNs/Foundation Models)
 ├── datasets/               # Dataset handling
 │   ├── __init__.py
-│   ├── slide_dataset.py    # PyTorch dataset for slide coordinate loading
+│   ├── slide_dataset.py    # PyTorch Native WSI Dataset mapping H5 coords
 │   └── split_manager.py    # Cross-validation and split generation
 ├── models/                 # Deep learning models
 │   ├── __init__.py
-│   ├── feature_models.py   # Implementations of ResNet, HIPT, UNI, etc.
+│   ├── feature_models.py   # Factory wrapping RN50, UNI, Virchow, Hibou, etc.
 │   └── mil_models.py       # ABMIL, CLAM, TransMIL, etc.
 ├── pipelines/              # Orchestration scripts for CLI commands
 │   ├── __init__.py
 │   ├── preprocess.py       # Thumbnails, Metadata, Segmentation, Patching
+│   ├── debug.py            # Debugging utilities for segmentation validation
+│   ├── extract.py          # GPU Loop orchestrating feature extraction to .pt
 │   ├── train.py            # Model training and validation loops
 │   ├── evaluate.py         # Evaluation and metrics
 │   └── visualize.py        # Heatmap reconstruction
 ├── utils/                  # Helper utilities
 │   ├── __init__.py
 │   ├── config.py           # YAML parsing and directory initialization
+│   ├── transforms.py       # Dynamic torchvision.transforms pipeline builder
 │   └── metrics.py          # AUC, F1, Accuracy tracking
 ├── docs/                   # Documentation
 │   ├── setup_and_usage.md
