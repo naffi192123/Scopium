@@ -47,11 +47,13 @@ class WSIReader:
         """
         return self.wsi.get_thumbnail((max_size, max_size))
 
-def process_wsi(slide_path, results_dirs):
+def process_wsi(slide_path, results_dirs, logger=None):
     """
     Given a single slide path, extracts metadata and thumbnail, saving them to results_dirs.
     """
-    print(f"Processing {slide_path}...")
+    if logger:
+        logger.info(f"Extracting metadata and thumbnail for {slide_path}...")
+        
     reader = WSIReader(slide_path)
     
     # Extract metadata
@@ -65,4 +67,5 @@ def process_wsi(slide_path, results_dirs):
     thumbnail_path = os.path.join(results_dirs['thumbnails'], f"{reader.slide_name}.png")
     thumbnail.save(thumbnail_path)
     
-    print(f"[{reader.slide_name}] Saved metadata and thumbnail.")
+    if logger:
+        logger.debug(f"[{reader.slide_name}] Saved metadata to {metadata_path} and thumbnail to {thumbnail_path}.")
