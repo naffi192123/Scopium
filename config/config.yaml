@@ -1,19 +1,64 @@
-dataset:
+# ==========================================================
+# WSI Framework Configuration
+# ==========================================================
+# This file controls all parameters for the WSI pipeline, 
+# from raw slide processing to deep learning feature extraction 
+# and multiple instance learning.
+
+paths:
+  # Directory containing raw WSI files
   slides_dir: "dataset/slides"
+  
+  # Directory containing manual annotations (optional)
   annotations_dir: "dataset/annotations"
+  
+  # Root directory where all generated artifacts will be saved
+  results_dir: "results"
 
-results_dir: "results"
+dataset:
+  # The file extension of the raw whole slide images
+  slide_extension: ".svs"
 
-pipeline:
-  patch_size: 256
-  step_size: 256
-  thumbnail_downscale: 64
+tiling:
+  # Size of the extracted patches (e.g., 512x512 pixels)
+  patch_size: 512
+  
+  # Step size or stride between patches (512 for non-overlapping)
+  step_size: 512
+  
+  # Pyramidal level from which to extract patches (0 is highest resolution)
+  level: 0
+  
+  # Patch extraction mode: 'sequential' or 'random'
+  mode: sequential
+  
+  # Number of parallel workers for data loading during feature extraction
+  num_workers: 8
 
-model:
-  feature_extractor: "resnet50"
-  mil_model: "clam_sb"
+feature_extraction:
+  # Deep learning feature encoder (e.g., 'rn50', 'hipt', 'uni')
+  model: rn50
+  
+  # List of preprocessing transformations to apply to patches
+  transforms:
+    - reinhard
+    - imagenet
 
-training:
-  batch_size: 256
-  epochs: 100
-  lr: 0.0001
+task:
+  # Name of the classification task (e.g., 'metastasis', 'subtype')
+  name: metastasis
+  
+  # Type of formulation: 'binary', 'multiclass', 'survival'
+  type: binary
+
+mil:
+  # The Multiple Instance Learning architecture (e.g., 'abmil', 'clam_sb', 'transmil')
+  model: abmil
+  
+  # Dimensionality of the feature vectors produced by the encoder
+  # (e.g., 1024 for ResNet50, 384 for HIPT, 1024 for UNI)
+  encoding_size: 1024
+
+experiment:
+  # Sub-folder inside results/ for specific sweeping experiments
+  name: default_experiment

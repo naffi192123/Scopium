@@ -14,9 +14,10 @@ def parse_args():
 def command_process(config, dirs_dict):
     """
     The 'process' command reads all WSIs in the dataset/slides directory,
+    The 'process' command reads all WSIs in the dataset/slides directory,
     extracts metadata, and generates thumbnails.
     """
-    slides_dir = config['dataset']['slides_dir']
+    slides_dir = config['paths']['slides_dir']
     
     # Accept common slide extensions
     extensions = ['*.svs', '*.tif', '*.ndpi', '*.vms', '*.vmu', '*.scn', '*.mrxs', '*.tiff', '*.bif']
