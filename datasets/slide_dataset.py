@@ -1,56 +1,58 @@
+"""
+datasets/slide_dataset.py
+
+PyTorch Dataset that streams patches out of a WSI on-the-fly.
+
+Key design decisions
+--------------------
+* The openslide.OpenSlide handle is passed IN to the constructor (not opened
+  inside it). This means the dataset is created AFTER the slide is opened in
+  the MAIN process, and the handle is then used from a single thread.
+* For Windows compatibility (ctypes cannot cross process boundaries) set
+  num_workers=0 in the DataLoader so patches are read in the main thread.
+"""
+
+import numpy as np
 import h5py
 import torch
 from torch.utils.data import Dataset
-from PIL import Image
 
-from core.wsi_reader import WSIReader
-from utils.transforms import build_transform_pipeline
 
 class WSIPatchDataset(Dataset):
     """
-    A PyTorch Dataset that maps directly over the extracted HDF5 patch coordinates.
-    Natively opens the corresponding WSI slide, extracts the high-resolution PIL tile, 
-    and applies the composed user-defined Torchvision transformations.
+    Streams patches from a WSI using coordinates stored in an HDF5 file.
+
+    Parameters
+    ----------
+    h5_path   : str             Path to the HDF5 file containing 'coords'.
+    wsi       : openslide.OpenSlide  Already-opened slide object.
+    transform : callable        Preprocessing pipeline to apply to each PIL image.
     """
-    def __init__(self, h5_path, slide_path, config):
-        """
-        Args:
-            h5_path (str): Path to the generated {slide_name}.h5 coordinate file.
-            slide_path (str): Path to the raw WSI image (e.g. .svs).
-            config (dict): The entire loaded YAML configuration dictionary.
-        """
-        self.h5_path = h5_path
-        self.slide_path = slide_path
-        
-        # Load the reader (OpenSlide obj inside)
-        self.reader = WSIReader(self.slide_path)
-        
-        # Parse the transform pipeline from config
-        self.transforms = build_transform_pipeline(config)
-        
-        # Extract attributes off the H5
-        with h5py.File(self.h5_path, "r") as f:
-            self.coords = f['coords'][:]
-            self.patch_level = f['coords'].attrs['patch_level']
-            self.patch_size = f['coords'].attrs['patch_size']
-            
-        self.length = len(self.coords)
-        
+
+    def __init__(self, h5_path: str, wsi, transform):
+        self.wsi       = wsi
+        self.transform = transform
+
+        with h5py.File(h5_path, 'r') as f:
+            self.coords      = f['coords'][:]
+            self.patch_level = int(f['coords'].attrs['patch_level'])
+            self.patch_size  = int(f['coords'].attrs['patch_size'])
+
     def __len__(self):
-        return self.length
+        return len(self.coords)
 
     def __getitem__(self, idx):
         coord = self.coords[idx]
-        
-        # Crop directly from OpenSlide
-        img = self.reader.wsi.read_region(
-            (coord[0], coord[1]), 
-            self.patch_level, 
+        img   = self.wsi.read_region(
+            (int(coord[0]), int(coord[1])),
+            self.patch_level,
             (self.patch_size, self.patch_size)
         ).convert('RGB')
-        
-        # Important: The transform pipeline we built automatically handles
-        # converting the PIL image to a tensor and normalizing it.
-        img_tensor = self.transforms(img)
-        
-        return img_tensor, coord
+        return self.transform(img), coord
+
+
+def collate_features(batch):
+    """Custom collate that stacks tensors and keeps coords as numpy."""
+    imgs   = torch.stack([item[0] for item in batch])
+    coords = np.stack([item[1] for item in batch])
+    return imgs, coords

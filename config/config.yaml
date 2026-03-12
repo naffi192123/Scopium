@@ -54,16 +54,16 @@ feature_extraction:
   model: rn50
   
   # Hardware and batching
-  batch_size: 256
+  batch_size: 64
   num_workers: 4
   
   # Resizes the raw extracted patch before feeding to model (set to -1 to disable)
   target_patch_size: -1
   
-  # List of preprocessing transformations to apply to patches
-  transforms:
-    - reinhard
-    - imagenet
+  # Transform preset to apply before feature extraction.
+  # 'auto' selects the canonical pipeline for the chosen model.
+  # Other options: none, reinhard, macenko, uni_default, gigapath_default, etc.
+  transforms: auto
 
 task:
   # Name of the classification task (e.g., 'metastasis', 'subtype')
