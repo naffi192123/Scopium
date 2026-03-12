@@ -2,7 +2,8 @@ import argparse
 import os
 import glob
 from utils.config import load_config, setup_directories
-from core.wsi_reader import process_wsi
+from core.wsi_reader import process_wsi, WSIReader
+from pipelines.preprocess import run_segment_and_patch
 from utils.logger import setup_logger
 import pandas as pd
 
@@ -57,14 +58,46 @@ def command_stats(config, logger):
     data = []
     for path in slide_paths:
         filename = os.path.basename(path)
-        slide_id = os.path.splitext(filename)[0]
         size_mb = os.path.getsize(path) / (1024 * 1024)
-        data.append({"slide_id": slide_id, "filename": filename, "size_mb": round(size_mb, 2)})
+        
+        slide_info = {
+            "slide_name": os.path.splitext(filename)[0],
+            "filename": filename,
+            "size_mb": round(size_mb, 2),
+            "dimensions": "Error",
+            "level_count": "Error",
+            "mpp_x": "Error",
+            "mpp_y": "Error"
+        }
+        
+        try:
+            reader = WSIReader(path)
+            meta = reader.get_metadata()
+            slide_info["dimensions"] = str(meta.get("dimensions", ""))
+            slide_info["level_count"] = meta.get("level_count", "")
+            slide_info["mpp_x"] = meta.get("mpp_x", "")
+            slide_info["mpp_y"] = meta.get("mpp_y", "")
+        except Exception as e:
+            logger.error(f"Failed to read metadata for {filename}: {e}")
+            
+        data.append(slide_info)
         
     df = pd.DataFrame(data)
     out_path = os.path.join(config['paths']['results_dir'], "dataset_stats.csv")
     df.to_csv(out_path, index=False)
     logger.info(f"Saved dataset statistics to {out_path}")
+
+def command_segment(config, dirs_dict, logger):
+    """
+    Runs the segmentation and patch coordinate extraction based on YAML configs.
+    """
+    slides_dir, slide_paths = get_slide_paths(config)
+    if not slide_paths:
+        logger.error(f"No slides found in {slides_dir}. Cannot run segmentation.")
+        return
+        
+    run_segment_and_patch(config, dirs_dict, slide_paths, logger)
+
 
 def main():
     args = parse_args()
@@ -80,7 +113,7 @@ def main():
     elif args.command == "stats":
         command_stats(config, logger)
     elif args.command == "segment":
-        logger.warning("Segment command not yet implemented.")
+        command_segment(config, dirs_dict, logger)
     elif args.command == "extract":
         logger.warning("Extract command not yet implemented.")
     elif args.command == "train":

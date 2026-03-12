@@ -1,6 +1,6 @@
 # WSI Framework Architecture Design
 
-Based on the analysis of `Ovarian_Features`, the new framework is designed to be modular, experiment-friendly, and configurable via YAML.
+The new framework is designed to be modular, experiment-friendly, and configurable via YAML.
 
 ## 1. Project Directory Structure
 ```text

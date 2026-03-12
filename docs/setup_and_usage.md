@@ -97,16 +97,28 @@ cd /path/to/wsi_framework
 pip install -r requirements.txt
 ```
 
-## First Task: Thumbnail & Metadata Extraction
-Run the following testing commands to verify WSI reading and metadata extraction.
+## Command-Line Usage
 
-**1. Copy sample WSIs**
-Copy 1-2 Sample `.svs` files into `wsi_framework/dataset/slides/`.
+The `main.py` entrypoint serves as the primary way to interact with the framework. It relies on the configurations set in `config/config.yaml`.
 
-**2. Run the process command**
+### 1. Dataset Scanning (`stats`)
+Scan the dataset directory and extract high-level metadata for all WSIs (dimensions, file size, pyramid levels, microns per pixel).
 ```bash
-python main.py process
+python main.py stats --config config/config.yaml
 ```
+**Output:** `results/dataset_stats.csv`
 
-**3. Verify Output**
-Check `wsi_framework/results/thumbnails/` and `wsi_framework/results/metadata/` for generated `.png` thumbnails and `.json` metadata files.
+### 2. Thumbnail & Metadata Extraction (`process`)
+Verify WSI reading by generating thumbnails and extracting complete metadata dictionaries.
+```bash
+python main.py process --config config/config.yaml
+```
+**Output:** `results/thumbnails/*.png` and `results/metadata/*.json`
+
+### 3. Tissue Segmentation & Patching (`segment`)
+Process the WSIs to detect valid tissue regions (using HSV color space and morphological filtering) and extract valid patch coordinates.
+It supports both `sequential` and `parallel` execution via the config `tiling.mode` setting.
+```bash
+python main.py segment --config config/config.yaml
+```
+**Output:** `results/masks/*_mask.png` and `results/patches/patch512_step512_level0/*.h5`

@@ -18,7 +18,7 @@ class WSIReader:
         """
         properties = dict(self.wsi.properties)
         
-        # Calculate level downsamples similar to original Ovarian_Features
+        # Calculate level downsamples reliably using dimensions
         level_downsamples = []
         dim_0 = self.wsi.level_dimensions[0]
         for downsample, dim in zip(self.wsi.level_downsamples, self.wsi.level_dimensions):

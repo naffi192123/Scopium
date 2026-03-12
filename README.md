@@ -9,13 +9,17 @@ Run via the centralized CLI `main.py`:
 ```bash
 python main.py --help
 
+python main.py stats --config config/config.yaml
 python main.py process --config config/config.yaml
+python main.py segment --config config/config.yaml
 ```
 
 Currently implemented modules:
 - Reading WSIs (`core.wsi_reader`)
-- Extracting whole-slide metadata (`core.wsi_reader`)
+- Extracting whole-slide metadata and Scanning Datasets (`core.wsi_reader`, `main.py stats`)
 - Thumbnail Generation (`core.wsi_reader`)
+- Tissue Segmentation via HSV/Otsu (`core.segmenter`)
+- Patch Coordinate Extraction & HDF5 saving (`core.patcher`)
 
 ## Configuration
 The pipeline is entirely driven by `config/config.yaml`.

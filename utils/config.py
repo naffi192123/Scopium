@@ -60,9 +60,9 @@ def setup_directories(config):
     os.makedirs(results_root, exist_ok=True)
     
     # Define variables for dynamic paths
-    p_size = config['tiling']['patch_size']
-    s_size = config['tiling']['step_size']
-    lvl = config['tiling']['level']
+    p_size = config['tiling'].get('patch_size', 512)
+    s_size = config['tiling'].get('step_size', 512)
+    lvl = config['tiling'].get('patch_level', 0)
     f_model = config['feature_extraction']['model']
     
     patch_str = f"patch{p_size}_step{s_size}_level{lvl}"
