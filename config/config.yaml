@@ -66,29 +66,67 @@ feature_extraction:
   transforms: auto
 
 task:
-  # Name of the classification task (e.g., 'metastasis', 'subtype')
+  # Name of the classification task
   name: metastasis
-  # Type of formulation: 'binary', 'multiclass', 'survival'
+  # 'binary' | 'multiclass'
   type: binary
+  # Number of output classes (2 for binary)
+  num_classes: 2
+  # Class names in label-index order
+  class_names: [benign, malignant]
 
 # --- Dataset Splitting ----------------------------------------------------------
 split:
-  # Mode: 'train_test' | 'train_val_test'
+  # 'train_test' | 'train_val_test'
   type: train_test
-
-  # Proportions (must sum to 1.0)
-  train_size: 0.8       # used by both modes
-  val_size: 0.1         # only used in train_val_test mode
-  test_size: 0.2        # used by both modes
-
-  stratified: true      # Stratify splits by label column
+  train_size: 0.8
+  val_size: 0.1         # only used in train_val_test
+  test_size: 0.2
+  stratified: true
   random_seed: 42
 
 mil:
-  # The Multiple Instance Learning architecture (e.g., 'abmil', 'clam_sb', 'transmil')
+  # Model: abmil | clam_sb | clam_mb | mean_pool | max_pool | transmil | dsmil
   model: abmil
-  # Dimensionality of the feature vectors produced by the encoder
-  encoding_size: 1024
+
+  # Must match the feature extractor output dim
+  # rn50=2048, rn18=512, uni/vit_l=1024, optimus/gigapath=1536, hibou_b/phikon=768
+  encoding_size: 1536
+
+  # Attention network hidden dimension
+  hidden_dim: 256
+
+  # Dropout probability (0 = disabled)
+  dropout: 0.25
+
+  # CLAM: number of top/bottom patches for instance clustering
+  k_sample: 8
+
+  # CLAM: weight for bag vs instance loss (1.0 = bag only)
+  bag_weight: 0.7
+
+training:
+  max_epochs: 100
+  learning_rate: 0.0002
+  weight_decay: 0.0001
+  # Adam betas
+  beta1: 0.9
+  beta2: 0.999
+
+  # LR scheduler (ReduceLROnPlateau)
+  lr_scheduler_factor: 0.5
+  lr_scheduler_patience: 10
+
+  # Early stopping
+  early_stopping: true
+  early_stopping_patience: 20
+  early_stopping_min_epochs: 10
+
+  # Class weighting for imbalanced datasets
+  weighted_loss: false
+
+  # DataLoader
+  num_workers: 0
 
 experiment:
   # Sub-folder inside results/ for specific sweeping experiments

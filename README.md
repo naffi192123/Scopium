@@ -1,6 +1,6 @@
 # Scopium — WSI Classification Framework
 
-A clean, modular, and YAML-configurable framework for Whole Slide Image (WSI) analysis — from raw slide ingestion through tissue segmentation, deep learning feature extraction, and Multiple Instance Learning (MIL) classification.
+A modular, YAML-configurable framework for Whole Slide Image (WSI) analysis — from raw slide ingestion through tissue segmentation, feature extraction, and Multiple Instance Learning (MIL) classification.
 
 ---
 
@@ -10,10 +10,10 @@ A clean, modular, and YAML-configurable framework for Whole Slide Image (WSI) an
 conda activate dl_py39
 cd wsi_framework
 
-# 1. Scan dataset and view slide metadata
+# 1. Scan dataset metadata
 python main.py stats --config config/config.yaml
 
-# 2. Generate thumbnails and JSON metadata
+# 2. Generate thumbnails & JSON metadata
 python main.py process --config config/config.yaml
 
 # 3. Tissue segmentation + patch coordinate extraction
@@ -21,10 +21,24 @@ python main.py segment --config config/config.yaml
 
 # 4. (Optional) Verify segmentation visually
 python main.py debug-segmentation --config config/config.yaml
-python main.py extract-tile --config config/config.yaml
 
-# 5. Feature extraction (GPU)
+# 5. GPU feature extraction -> .pt + .h5 per slide
 python main.py extract --config config/config.yaml
+
+# 6. Analyse annotation CSV
+python main.py analyse --config config/config.yaml
+
+# 7. Create train/val/test splits
+python main.py split --config config/config.yaml
+
+# 8. Train MIL model
+python main.py train --config config/config.yaml
+
+# 9. Evaluate on test set
+python main.py evaluate --config config/config.yaml
+
+# 10. Generate attention heatmaps
+python main.py heatmap --config config/config.yaml
 ```
 
 ---
@@ -33,94 +47,122 @@ python main.py extract --config config/config.yaml
 
 | Command | Description |
 |---|---|
-| `stats` | Scan `slides_dir` and save `dataset_stats.csv` |
-| `process` | Generate thumbnail PNGs and JSON metadata per slide |
+| `stats` | Scan `slides_dir` → `dataset_stats.csv` |
+| `process` | Thumbnail PNGs + JSON metadata per slide |
 | `segment` | Tissue segmentation → patch coordinate `.h5` files |
-| `debug-segmentation` | Overlay patch tiles onto WSI thumbnail for visual verification |
-| `extract-tile` | Extract and save a single high-res tile for inspection |
-| `extract` | GPU feature extraction → `.pt` + `.h5` files per slide |
-| `train` | *(coming soon)* MIL model training |
-| `evaluate` | *(coming soon)* ROC, AUC, classification metrics |
-| `heatmap` | *(coming soon)* Spatial attention heatmap generation |
+| `debug-segmentation` | Tile overlay on WSI thumbnail |
+| `extract-tile` | Single high-res tile extraction for visual QC |
+| `extract` | GPU feature extraction → `.pt` + `.h5` per slide |
+| `analyse` | Annotation CSV validation + class distribution |
+| `split` | Train/test (or train/val/test) split generation |
+| `train` | MIL model training with history + checkpointing |
+| `evaluate` | Evaluation metrics, ROC curves, confusion matrix |
+| `heatmap` | Attention heatmap overlay + top-20 tile extraction |
 
 ---
 
 ## Implemented Modules
 
-| Module | Status | Description |
+| Module | Status | Key File |
 |---|---|---|
 | WSI Reading & Metadata | ✅ | `core/wsi_reader.py` |
-| Dataset Statistics | ✅ | `main.py stats` |
-| Thumbnail Generation | ✅ | `core/wsi_reader.py` |
-| Tissue Segmentation | ✅ | `core/segmenter.py` (HSV + Otsu) |
-| Patch Extraction | ✅ | `core/patcher.py` → HDF5 coords |
+| Tissue Segmentation | ✅ | `core/segmenter.py` |
+| Patch Extraction | ✅ | `core/patcher.py` |
 | Debugging Utilities | ✅ | `pipelines/debug.py` |
-| Feature Extraction | ✅ | `pipelines/extract.py` → `.pt` + `.h5` |
-| MIL Training | 🔜 | `pipelines/train.py` |
-| Evaluation | 🔜 | `pipelines/evaluate.py` |
-| Attention Heatmaps | 🔜 | `pipelines/visualize.py` |
+| Feature Extraction | ✅ | `pipelines/extract.py` |
+| Annotation Analysis | ✅ | `pipelines/analyse_annotations.py` |
+| Dataset Splitting | ✅ | `pipelines/split.py` |
+| MIL Training | ✅ | `pipelines/train.py` |
+| MIL Evaluation | ✅ | `pipelines/evaluate.py` |
+| Attention Heatmaps | ✅ | `pipelines/visualize.py` |
+
+---
+
+## Supported MIL Models
+
+Set via `mil.model` in `config.yaml`:
+
+| Key | Architecture | Attention |
+|---|---|---|
+| `mean_pool` | Global Average Pool | No |
+| `max_pool` | Global Max Pool | No |
+| `abmil` | Gated Attention MIL (Ilse 2018) | Yes |
+| `clam_sb` | CLAM Single-Branch (Lu 2021) | Yes |
+| `clam_mb` | CLAM Multi-Branch (Lu 2021) | Yes |
+| `transmil` | Transformer MIL (Shao 2021) | No |
+| `dsmil` | Dual-Stream MIL (Li 2021) | Yes |
+
+> Heatmaps are only generated for attention-based models: `abmil`, `clam_sb`, `clam_mb`, `dsmil`.
 
 ---
 
 ## Supported Feature Extractors
 
-| Model Key | Architecture | Embedding Dim |
+| Key | Architecture | Embedding Dim |
 |---|---|---|
-| `rn18` | ResNet-18 (ImageNet) | 512 |
-| `rn50` | ResNet-50 (ImageNet) | 2048 |
-| `vit_l` | ViT-Large (ImageNet, timm) | 1024 |
-| `uni` | UNI (MahmoodLab) | 1024 |
-| `provgigapath` | Prov-GigaPath (Microsoft) | 1536 |
-| `phikon` | Phikon (Owkin) | 768 |
-| `hibou_b` | Hibou-B (HistAI) | 768 |
-| `hibou_l` | Hibou-L (HistAI) | 1024 |
-| `optimus` | H-Optimus-0 (BioOptimus) | 1536 |
-| `virchow` | Virchow (Paige) | 2560 |
-| `virchow2cls` | Virchow-2 CLS (Paige) | 1280 |
+| `rn18` | ResNet-18 | 512 |
+| `rn50` | ResNet-50 | 2048 |
+| `vit_l` | ViT-Large | 1024 |
+| `uni` | UNI | 1024 |
+| `provgigapath` | Prov-GigaPath | 1536 |
+| `phikon` | Phikon | 768 |
+| `hibou_b` | Hibou-B | 768 |
+| `hibou_l` | Hibou-L | 1024 |
+| `optimus` | H-Optimus-0 | 1536 |
+| `virchow` | Virchow | 2560 |
 
 ---
 
-## Supported Transforms
-
-Set via `feature_extraction.transforms` in `config.yaml`:
-
-| Key | Description |
-|---|---|
-| `auto` | Canonical pipeline for the selected model (recommended) |
-| `none` | ToTensor + ImageNet normalization |
-| `reinhard` | Reinhard stain normalization + ImageNet normalization |
-| `macenko` | Macenko stain normalization |
-| `uni_default` | Resize 224 + ImageNet normalization |
-| `gigapath_default` | Resize 256 + CenterCrop 224 + ImageNet normalization |
-| `hibou_default` | Resize + CenterCrop 224 + Hibou statistics |
-| `colourjitter` | Color jitter augmentation |
-
----
-
-## Feature Extraction Output
-
-Both `.pt` and `.h5` files are saved per slide, matching the reference repo behaviour:
-
-```
-results/features/patch512_step512_level0__rn50/
-    ├── h5_files/
-    │   └── <slide_name>.h5      # HDF5: 'features' (N,D) + 'coords' (N,2)
-    └── pt_files/
-        └── <slide_name>.pt      # PyTorch tensor (N, D)
-```
-
----
-
-## Configuration
-
-The entire pipeline is driven by a single `config/config.yaml`. Key sections:
+## Key Configuration Options
 
 ```yaml
-feature_extraction:
-  model: rn50           # Model key (see table above)
-  batch_size: 64        # Reduce if GPU OOM
-  transforms: auto      # 'auto' | 'none' | 'reinhard' | 'macenko' | ...
-  weights_path: null    # Local weights path (required for some models)
+task:
+  name: metastasis
+  type: binary          # binary | multiclass
+  num_classes: 2
+  class_names: [benign, malignant]
+
+mil:
+  model: abmil           # see model table above
+  encoding_size: 1536    # must match feature extractor dim
+  hidden_dim: 256
+  dropout: 0.25
+
+training:
+  max_epochs: 100
+  learning_rate: 0.0002
+  early_stopping: true
+  early_stopping_patience: 20
+
+split:
+  type: train_test       # train_test | train_val_test
+  test_size: 0.2
+  stratified: true
+  random_seed: 42
 ```
 
-See `docs/setup_and_usage.md` for full environment setup, parameter reference, and HPC instructions.
+---
+
+## Training Output Structure
+
+```
+results/experiments/<task>/<model>_<timestamp>/
+    best_model.pt             # weights + optimizer + config + class_map
+    final_model.pt            # final epoch checkpoint
+    training_history.csv      # loss/acc/auc/f1/lr/time per epoch
+    config_snapshot.yaml      # exact config used for this run
+    evaluate/
+        predictions.csv       # slide_id, true_label, pred_label, probs
+        roc_data.csv          # fpr, tpr, thresholds (replot anytime)
+        confusion_matrix.csv
+        classification_report.txt
+        metrics.json
+        roc_curve.png
+        confusion_matrix.png
+    heatmaps/<slide_id>/
+        <slide>_heatmap.png
+        <slide>_attention_scores.csv
+        top20_tiles/
+            01_<slide>_x..._y..._a....png
+            ...
+```

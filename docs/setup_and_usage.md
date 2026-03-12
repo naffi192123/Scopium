@@ -7,35 +7,23 @@
 ### Windows (Local Development)
 
 ```bash
-# 1. Create the conda environment
 conda create -y -n dl_py39 python=3.9
 conda activate dl_py39
-
-# 2. Navigate to the project and install dependencies
 cd path\to\wsi_framework
 pip install -r requirements.txt
+pip install scikit-learn   # for dataset splitting + metrics
 ```
 
-> **Windows note:** OpenSlide binaries must be installed manually.
-> Download from [openslide.org](https://openslide.org/download/) and add the `bin\` folder to your `PATH`.
-> Install `torchstain` separately if using stain normalisation:
-> ```bash
-> pip install torchstain
-> ```
+> **Windows note:** Install OpenSlide binaries from [openslide.org](https://openslide.org/download/) and add `bin\` to your `PATH`.
 
 ### HPC Cluster (CentOS / SLURM)
 
 ```bash
-ssh gpu4
-module load anaconda3/2023.03
-module load cuda/12.2
-eval "$(conda shell.bash hook)"
-
+module load anaconda3/2023.03 cuda/12.2
 conda create -y -n dl_py39 python=3.9
 conda activate dl_py39
-
-cd /path/to/wsi_framework
 pip install -r requirements.txt
+pip install scikit-learn
 ```
 
 ---
@@ -254,6 +242,132 @@ Batch size affects GPU memory linearly. Reference values for a **512×512 tile p
 
 ---
 
+### 6. Annotation CSV Analysis (`analyse`)
+
+```bash
+python main.py analyse --config config/config.yaml
+# Override CSV:
+python main.py analyse --config config/config.yaml --csv path/to/labels.csv
+```
+
+Reports: CSV format, class distribution, duplicates, missing labels, SVS file coverage, feature file coverage.
+
+---
+
+### 7. Dataset Splitting (`split`)
+
+```bash
+python main.py split --config config/config.yaml
+```
+
+Config options (`split` block in `config.yaml`):
+
+```yaml
+split:
+  type: train_test       # train_test | train_val_test
+  train_size: 0.8
+  val_size: 0.1          # only for train_val_test
+  test_size: 0.2
+  stratified: true
+  random_seed: 42
+```
+
+**Output:** `results/splits/<task_name>/{train,val,test}.csv` + `split_summary.txt`
+
+---
+
+### 8. MIL Training (`train`)
+
+```bash
+python main.py train --config config/config.yaml
+```
+
+Config options:
+
+```yaml
+task:
+  name: metastasis
+  type: binary          # binary | multiclass
+  num_classes: 2
+  class_names: [benign, malignant]
+
+mil:
+  model: abmil          # abmil | clam_sb | clam_mb | mean_pool | max_pool | transmil | dsmil
+  encoding_size: 1536   # MUST match feature extractor output dim
+  hidden_dim: 256
+  dropout: 0.25
+  k_sample: 8           # CLAM only
+  bag_weight: 0.7       # CLAM only
+
+training:
+  max_epochs: 100
+  learning_rate: 0.0002
+  early_stopping: true
+  early_stopping_patience: 20
+  early_stopping_min_epochs: 10
+  weighted_loss: false
+```
+
+**Outputs:** `results/experiments/<task>/<model>_<timestamp>/`
+- `best_model.pt` — dict: weights, optimizer, scheduler, config, class_map, metrics, timestamp
+- `final_model.pt`
+- `training_history.csv` — loss, acc, auc, f1, lr, time per epoch
+- `config_snapshot.yaml`
+
+---
+
+### 9. Evaluation (`evaluate`)
+
+```bash
+# Auto-detect latest experiment:
+python main.py evaluate --config config/config.yaml
+
+# Specify experiment directory:
+python main.py evaluate --config config/config.yaml --experiment results/experiments/metastasis/abmil_20260313_010000
+```
+
+**Outputs:** `<experiment_dir>/evaluate/`
+- `predictions.csv` — slide_id, true_label, pred_label, prob_class0, prob_class1, ...
+- `roc_data.csv` — fpr, tpr, thresholds (replot without rerunning)
+- `confusion_matrix.csv`
+- `classification_report.txt`
+- `metrics.json` — accuracy, balanced_accuracy, f1, precision, recall, roc_auc
+- `roc_curve.png`, `confusion_matrix.png`
+
+---
+
+### 10. Attention Heatmaps (`heatmap`)
+
+Only supported for attention-based models: `abmil`, `clam_sb`, `clam_mb`, `dsmil`.
+
+```bash
+python main.py heatmap --config config/config.yaml
+# Or specify experiment:
+python main.py heatmap --config config/config.yaml --experiment results/experiments/metastasis/abmil_...
+```
+
+**Outputs:** `<experiment_dir>/heatmaps/<slide_id>/`
+- `<slide_id>_heatmap.png` — jet colormap overlay on WSI thumbnail
+- `<slide_id>_attention_scores.csv` — coord_x, coord_y, attention per patch
+- `top20_tiles/` — top 20 highest-attention tiles extracted from the raw WSI
+
+---
+
+## Supported MIL Models
+
+| Key | Architecture | Attention |
+|---|---|---|
+| `mean_pool` | Global Average Pool | No |
+| `max_pool` | Global Max Pool | No |
+| `abmil` | Gated Attention MIL (Ilse 2018) | Yes |
+| `clam_sb` | CLAM Single-Branch (Lu 2021) | Yes |
+| `clam_mb` | CLAM Multi-Branch (Lu 2021) | Yes |
+| `transmil` | Transformer MIL (Shao 2021) | No |
+| `dsmil` | Dual-Stream MIL (Li 2021) | Yes |
+
+---
+
 ## Logging
 
-All commands write a structured log to `results/wsi_framework.log` (rotating, 10 MB). Console output mirrors the log at the same level.
+All commands write a structured log to `results/wsi_framework.log` (rotating, 10 MB).
+

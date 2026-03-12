@@ -8,6 +8,9 @@ from pipelines.debug import command_debug_segmentation, command_extract_tile
 from pipelines.extract import command_extract
 from pipelines.analyse_annotations import run_analysis
 from pipelines.split import command_split
+from pipelines.train import command_train
+from pipelines.evaluate import command_evaluate
+from pipelines.visualize import command_heatmap
 from utils.logger import setup_logger
 import pandas as pd
 
@@ -16,7 +19,9 @@ def parse_args():
     parser.add_argument("command", choices=["process", "stats", "segment", "debug-segmentation", "extract-tile", "extract", "analyse", "split", "train", "evaluate", "heatmap"],
                         help="Command to execute")
     parser.add_argument("--config", type=str, default="config/config.yaml", help="Path to the config file")
-    parser.add_argument("--csv", type=str, default=None, help="[analyse] Path to annotation CSV (auto-detect if omitted)")
+    parser.add_argument("--csv", type=str, default=None, help="[analyse/split] Path to annotation CSV")
+    parser.add_argument("--experiment", type=str, default=None,
+                        help="[evaluate/heatmap] Path to experiment dir (auto-detect latest if omitted)")
     return parser.parse_args()
 
 def get_slide_paths(config):
@@ -130,11 +135,11 @@ def main():
     elif args.command == "split":
         command_split(config, dirs_dict, logger, csv_path=args.csv)
     elif args.command == "train":
-        logger.warning("Train command not yet implemented.")
+        command_train(config, dirs_dict, logger)
     elif args.command == "evaluate":
-        logger.warning("Evaluate command not yet implemented.")
+        command_evaluate(config, dirs_dict, logger, experiment_dir=args.experiment)
     elif args.command == "heatmap":
-        logger.warning("Heatmap command not yet implemented.")
+        command_heatmap(config, dirs_dict, logger, experiment_dir=args.experiment)
 
 if __name__ == "__main__":
     main()
