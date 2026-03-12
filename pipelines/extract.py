@@ -220,8 +220,8 @@ def command_extract(config: dict, dirs_dict: dict, log=None):
         _log.info(
             f"[{slide_name}] Done | Shape: {slide_features.shape} | "
             f"Time: {elapsed:.1f}s")
-        _log.info(f"  .pt  → {pt_path}")
-        _log.info(f"  .h5  → {h5_out}")
+        _log.info(f"  .pt  -> {pt_path}")
+        _log.info(f"  .h5  -> {h5_out}")
         success += 1
 
     total = time.time() - wall_start
