@@ -51,7 +51,7 @@ tiling:
 
 feature_extraction:
   # Deep learning feature encoder (e.g., 'rn50', 'hipt', 'uni')
-  model: optimus
+  model: rn50
   
   # Hardware and batching
   batch_size: 64
@@ -78,8 +78,8 @@ task:
 # --- Dataset Splitting ----------------------------------------------------------
 split:
   # 'train_test' | 'train_val_test'
-  type: train_test
-  train_size: 0.8
+  type: train_val_test
+  train_size: 0.7
   val_size: 0.1         # only used in train_val_test
   test_size: 0.2
   stratified: true
@@ -91,7 +91,7 @@ mil:
 
   # Must match the feature extractor output dim
   # rn50=2048, rn18=512, uni/vit_l=1024, optimus/gigapath=1536, hibou_b/phikon=768
-  encoding_size: 1536
+  encoding_size: 2048
 
   # Attention network hidden dimension
   hidden_dim: 256

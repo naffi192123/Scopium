@@ -7,10 +7,17 @@ Usage via CLI:
     python main.py train --config config/config.yaml
 
 Outputs (in results/experiments/<task>/<model>_<timestamp>/):
-    best_model.pt          - best checkpoint (dict with weights + meta)
+    best_model.pt          - best checkpoint (weights + meta)
     final_model.pt         - final epoch checkpoint
-    training_history.csv   - per-epoch: loss/acc/auc/f1/lr/time for train+val
+    train_history.csv      - two rows per epoch: phase=train, phase=val
+                             columns: epoch, phase, loss, accuracy, auc,
+                                      precision, recall, f1, lr, epoch_time_s
     config_snapshot.yaml   - copy of the YAML config used
+    plots/
+        train_loss_curve.png
+        val_auc_curve.png
+        val_acc_curve.png
+        learning_rate.png
 """
 
 import os
@@ -33,8 +40,15 @@ from models.mil_models import build_mil_model, has_attention
 
 logger = logging.getLogger(__name__)
 
+# ─── History columns (matches reference schema) ───────────────────────────────
+HISTORY_COLS = [
+    'epoch', 'phase',
+    'loss', 'accuracy', 'auc', 'precision', 'recall', 'f1',
+    'lr', 'epoch_time_s',
+]
 
-# ─── Helpers ────────────────────────────────────────────────────────────────
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def _seed(seed):
     import random
@@ -48,7 +62,6 @@ def _seed(seed):
 def _compute_metrics(all_probs, all_preds, all_labels, n_classes):
     """Return dict of scalar metrics."""
     acc  = accuracy_score(all_labels, all_preds)
-    bacc = balanced_accuracy_score(all_labels, all_preds)
     f1   = f1_score(all_labels, all_preds,
                     average='binary' if n_classes == 2 else 'macro',
                     zero_division=0)
@@ -65,14 +78,12 @@ def _compute_metrics(all_probs, all_preds, all_labels, n_classes):
             auc = roc_auc_score(all_labels, all_probs, multi_class='ovr')
     except Exception:
         auc = 0.0
-    return dict(acc=acc, bal_acc=bacc, f1=f1, precision=prec,
-                recall=rec, auc=auc)
+    return dict(acc=acc, f1=f1, precision=prec, recall=rec, auc=auc)
 
 
 def _build_loss_fn(config, class_names, device):
     """Build CrossEntropyLoss, optionally class-weighted."""
     if config.get('training', {}).get('weighted_loss', False):
-        # inverse frequency weights (requires train CSV)
         task_name = config['task']['name']
         results   = config['paths']['results_dir']
         train_csv = os.path.join(results, 'splits', task_name, 'train.csv')
@@ -123,7 +134,7 @@ def _run_epoch(model, loader, optimizer, loss_fn,
                 all_preds.append(Y_hat.detach().cpu().item())
                 all_labels.append(label.cpu().item())
 
-    avg_loss = total_loss / max(len(all_labels), 1)
+    avg_loss   = total_loss / max(len(all_labels), 1)
     all_probs  = np.array(all_probs)
     all_preds  = np.array(all_preds)
     all_labels = np.array(all_labels)
@@ -131,7 +142,124 @@ def _run_epoch(model, loader, optimizer, loss_fn,
     return avg_loss, metrics
 
 
-# ─── Main command ────────────────────────────────────────────────────────────
+def _append_history_row(exp_dir, row):
+    """Append one row to train_history.csv (create with header if new)."""
+    record  = {c: row.get(c, float('nan')) for c in HISTORY_COLS}
+    df_new  = pd.DataFrame([record])
+    csv_path = os.path.join(exp_dir, 'train_history.csv')
+    if os.path.exists(csv_path):
+        df_new.to_csv(csv_path, mode='a', header=False, index=False)
+    else:
+        df_new.to_csv(csv_path, mode='w', header=True, index=False)
+
+
+def _save_checkpoint(path, model, optimizer, scheduler,
+                     epoch, metrics, config, class_names, mil_name, is_best):
+    """Save a rich checkpoint dict."""
+    ckpt = {
+        'model_state':     model.state_dict(),
+        'optimizer_state': optimizer.state_dict(),
+        'scheduler_state': scheduler.state_dict(),
+        'epoch':           epoch,
+        'metrics':         metrics,
+        'config':          config,
+        'class_names':     class_names,
+        'class_to_idx':    {c: i for i, c in enumerate(class_names)},
+        'model_type':      mil_name,
+        'timestamp':       datetime.datetime.now().isoformat(timespec='seconds'),
+        'is_best':         is_best,
+    }
+    torch.save(ckpt, path)
+    tag = 'BEST' if is_best else 'final'
+    logger.info(f"  Checkpoint [{tag}] saved → {path}")
+
+
+def _plot_training_curves(exp_dir):
+    """Save training curve PNGs to exp_dir/plots/."""
+    history_csv = os.path.join(exp_dir, 'train_history.csv')
+    if not os.path.exists(history_csv):
+        return []
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+    except ImportError:
+        logger.warning("  matplotlib not found — skipping training curve plots")
+        return []
+
+    df = pd.read_csv(history_csv)
+    if df.empty:
+        return []
+
+    plots_dir = os.path.join(exp_dir, 'plots')
+    os.makedirs(plots_dir, exist_ok=True)
+
+    train_df = df[df['phase'] == 'train']
+    val_df   = df[df['phase'] == 'val']
+    saved    = []
+
+    # Loss curve
+    if 'loss' in df.columns:
+        fig, ax = plt.subplots(figsize=(8, 5))
+        if not train_df.empty:
+            ax.plot(train_df['epoch'], train_df['loss'],
+                    label='Train loss', lw=1.5, color='steelblue')
+        if not val_df.empty:
+            ax.plot(val_df['epoch'], val_df['loss'],
+                    label='Val loss', lw=1.5, color='tomato', linestyle='--')
+        ax.set_xlabel('Epoch'); ax.set_ylabel('Loss')
+        ax.set_title('Training & Validation Loss')
+        ax.legend(); ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        out = os.path.join(plots_dir, 'train_loss_curve.png')
+        fig.savefig(out, dpi=120); plt.close(fig)
+        saved.append(out)
+
+    # Val AUC
+    if 'auc' in val_df.columns and not val_df['auc'].isna().all():
+        fig, ax = plt.subplots(figsize=(8, 5))
+        ax.plot(val_df['epoch'], val_df['auc'],
+                label='Val AUC', lw=1.5, color='mediumseagreen')
+        ax.set_xlabel('Epoch'); ax.set_ylabel('AUC')
+        ax.set_title('Validation AUC'); ax.set_ylim(0, 1.05)
+        ax.legend(); ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        out = os.path.join(plots_dir, 'val_auc_curve.png')
+        fig.savefig(out, dpi=120); plt.close(fig)
+        saved.append(out)
+
+    # Val Accuracy
+    if 'accuracy' in val_df.columns and not val_df['accuracy'].isna().all():
+        fig, ax = plt.subplots(figsize=(8, 5))
+        ax.plot(val_df['epoch'], val_df['accuracy'],
+                label='Val Accuracy', lw=1.5, color='darkorchid')
+        ax.set_xlabel('Epoch'); ax.set_ylabel('Accuracy')
+        ax.set_title('Validation Accuracy'); ax.set_ylim(0, 1.05)
+        ax.legend(); ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        out = os.path.join(plots_dir, 'val_acc_curve.png')
+        fig.savefig(out, dpi=120); plt.close(fig)
+        saved.append(out)
+
+    # Learning rate
+    if 'lr' in train_df.columns and not train_df['lr'].isna().all():
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.semilogy(train_df['epoch'], train_df['lr'],
+                    lw=1.5, color='goldenrod')
+        ax.set_xlabel('Epoch'); ax.set_ylabel('LR (log scale)')
+        ax.set_title('Learning Rate Schedule')
+        ax.grid(True, alpha=0.3, which='both')
+        fig.tight_layout()
+        out = os.path.join(plots_dir, 'learning_rate.png')
+        fig.savefig(out, dpi=120); plt.close(fig)
+        saved.append(out)
+
+    if saved:
+        logger.info(f"  Training curves → {plots_dir}/ ({len(saved)} plots)")
+    return saved
+
+
+# ─── Main command ──────────────────────────────────────────────────────────────
 
 def command_train(config: dict, dirs_dict: dict, log=None):
     _log = log or logger
@@ -140,7 +268,7 @@ def command_train(config: dict, dirs_dict: dict, log=None):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     _log.info(f"Training device: {device}")
 
-    # ── Datasets ─────────────────────────────────────────────────────────────
+    # ── Datasets ───────────────────────────────────────────────────────────────
     datasets, class_names = build_mil_datasets(config, dirs_dict)
     if 'train' not in datasets:
         _log.error("No train.csv split found. Run: python main.py split --config ...")
@@ -156,20 +284,21 @@ def command_train(config: dict, dirs_dict: dict, log=None):
         val_loader = DataLoader(datasets['val'], batch_size=1, shuffle=False,
                                 num_workers=nw, collate_fn=mil_collate_fn)
 
-    # ── Model ─────────────────────────────────────────────────────────────────
+    # ── Model ──────────────────────────────────────────────────────────────────
     model, n_params = build_mil_model(config)
     model.to(device)
     use_clam   = config['mil']['model'].startswith('clam')
     n_classes  = config['task'].get('num_classes', 2)
     bag_weight = float(config['mil'].get('bag_weight', 0.7))
+    mil_name   = config['mil']['model']
 
-    _log.info(f"Model: {config['mil']['model']} | Params: {n_params:,} | Classes: {n_classes}")
+    _log.info(f"Model: {mil_name} | Params: {n_params:,} | Classes: {n_classes}")
 
-    # ── Optimiser & scheduler ─────────────────────────────────────────────────
-    lr      = float(train_cfg.get('learning_rate',   2e-4))
-    wd      = float(train_cfg.get('weight_decay',    1e-4))
-    b1      = float(train_cfg.get('beta1',           0.9))
-    b2      = float(train_cfg.get('beta2',           0.999))
+    # ── Optimiser & scheduler ──────────────────────────────────────────────────
+    lr        = float(train_cfg.get('learning_rate',   2e-4))
+    wd        = float(train_cfg.get('weight_decay',    1e-4))
+    b1        = float(train_cfg.get('beta1',           0.9))
+    b2        = float(train_cfg.get('beta2',           0.999))
     optimizer = torch.optim.Adam(model.parameters(), lr=lr,
                                  weight_decay=wd, betas=(b1, b2))
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -178,22 +307,20 @@ def command_train(config: dict, dirs_dict: dict, log=None):
         patience = int(train_cfg.get('lr_scheduler_patience', 10)),
     )
 
-    # ── Loss ──────────────────────────────────────────────────────────────────
-    loss_fn   = _build_loss_fn(config, class_names, device)
+    loss_fn = _build_loss_fn(config, class_names, device)
 
-    # ── Early stopping ────────────────────────────────────────────────────────
-    do_es     = bool(train_cfg.get('early_stopping', True))
-    es_pat    = int(train_cfg.get('early_stopping_patience', 20))
-    es_min    = int(train_cfg.get('early_stopping_min_epochs', 10))
-    max_ep    = int(train_cfg.get('max_epochs', 100))
+    # ── Early stopping ─────────────────────────────────────────────────────────
+    do_es  = bool(train_cfg.get('early_stopping', True))
+    es_pat = int(train_cfg.get('early_stopping_patience', 20))
+    es_min = int(train_cfg.get('early_stopping_min_epochs', 10))
+    max_ep = int(train_cfg.get('max_epochs', 100))
 
     best_val_loss = float('inf')
     es_counter    = 0
 
-    # ── Experiment directory ──────────────────────────────────────────────────
-    stamp    = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    # ── Experiment directory ───────────────────────────────────────────────────
+    stamp     = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
     task_name = config['task']['name']
-    mil_name  = config['mil']['model']
     exp_dir   = os.path.join(config['paths']['results_dir'],
                              'experiments', task_name,
                              f"{mil_name}_{stamp}")
@@ -204,10 +331,10 @@ def command_train(config: dict, dirs_dict: dict, log=None):
     with open(os.path.join(exp_dir, 'config_snapshot.yaml'), 'w') as f:
         yaml.dump(config, f, default_flow_style=False)
 
-    # ── Training loop ─────────────────────────────────────────────────────────
-    history_rows = []
-    best_model_path = os.path.join(exp_dir, 'best_model.pt')
+    best_model_path  = os.path.join(exp_dir, 'best_model.pt')
+    best_epoch_metrics = {}
 
+    # ── Training loop ──────────────────────────────────────────────────────────
     for epoch in range(1, max_ep + 1):
         t0 = time.time()
 
@@ -215,85 +342,94 @@ def command_train(config: dict, dirs_dict: dict, log=None):
                                      n_classes, device, is_train=True,
                                      use_clam=use_clam, bag_weight=bag_weight)
         elapsed = time.time() - t0
+        current_lr = optimizer.param_groups[0]['lr']
 
-        row = {
-            'epoch': epoch, 'time_s': round(elapsed, 1),
-            'lr': optimizer.param_groups[0]['lr'],
-            'train_loss': tr_loss,
-            'train_acc': tr_met['acc'], 'train_auc': tr_met['auc'],
-            'train_f1': tr_met['f1'], 'train_bacc': tr_met['bal_acc'],
-        }
+        # ── Write train row ────────────────────────────────────────────────────
+        _append_history_row(exp_dir, {
+            'epoch':        epoch,
+            'phase':        'train',
+            'loss':         tr_loss,
+            'accuracy':     tr_met['acc'],
+            'auc':          tr_met['auc'],
+            'precision':    tr_met['precision'],
+            'recall':       tr_met['recall'],
+            'f1':           tr_met['f1'],
+            'lr':           current_lr,
+            'epoch_time_s': round(elapsed, 2),
+        })
 
+        # ── Validation ─────────────────────────────────────────────────────────
         if val_loader is not None:
             vl_loss, vl_met = _run_epoch(model, val_loader, optimizer, loss_fn,
                                          n_classes, device, is_train=False,
                                          use_clam=use_clam, bag_weight=bag_weight)
             scheduler.step(vl_loss)
-            row.update({
-                'val_loss':  vl_loss,
-                'val_acc':   vl_met['acc'], 'val_auc':  vl_met['auc'],
-                'val_f1':    vl_met['f1'],  'val_bacc': vl_met['bal_acc'],
-            })
             monitor_loss = vl_loss
+
+            _append_history_row(exp_dir, {
+                'epoch':     epoch,
+                'phase':     'val',
+                'loss':      vl_loss,
+                'accuracy':  vl_met['acc'],
+                'auc':       vl_met['auc'],
+                'precision': vl_met['precision'],
+                'recall':    vl_met['recall'],
+                'f1':        vl_met['f1'],
+                'lr':        current_lr,
+            })
+
             _log.info(
                 f"Epoch {epoch:>3}/{max_ep} | "
                 f"tr_loss={tr_loss:.4f} acc={tr_met['acc']:.3f} auc={tr_met['auc']:.3f} | "
                 f"val_loss={vl_loss:.4f} acc={vl_met['acc']:.3f} auc={vl_met['auc']:.3f} | "
-                f"lr={row['lr']:.2e} | {elapsed:.1f}s")
+                f"lr={current_lr:.2e} | {elapsed:.1f}s")
         else:
             scheduler.step(tr_loss)
             monitor_loss = tr_loss
+            vl_met = tr_met
+            vl_loss = tr_loss
             _log.info(
                 f"Epoch {epoch:>3}/{max_ep} | "
                 f"tr_loss={tr_loss:.4f} acc={tr_met['acc']:.3f} auc={tr_met['auc']:.3f} | "
-                f"lr={row['lr']:.2e} | {elapsed:.1f}s")
+                f"lr={current_lr:.2e} | {elapsed:.1f}s")
 
-        history_rows.append(row)
-
-        # Save best model
+        # ── Best checkpoint ────────────────────────────────────────────────────
         if monitor_loss < best_val_loss:
-            best_val_loss = monitor_loss
-            es_counter    = 0
-            ckpt = {
-                'epoch':         epoch,
-                'model_state':   model.state_dict(),
-                'optim_state':   optimizer.state_dict(),
-                'sched_state':   scheduler.state_dict(),
-                'best_val_loss': best_val_loss,
-                'metrics':       row,
-                'config':        config,
-                'class_names':   class_names,
-                'class_to_idx':  {c: i for i, c in enumerate(class_names)},
-                'model_type':    mil_name,
-                'timestamp':     stamp,
-            }
-            torch.save(ckpt, best_model_path)
-            _log.info(f"  -> best model saved (val_loss={best_val_loss:.4f})")
+            best_val_loss      = monitor_loss
+            best_epoch_metrics = {'epoch': epoch, **{f'val_{k}': v
+                                  for k, v in vl_met.items()}}
+            es_counter = 0
+            _save_checkpoint(best_model_path, model, optimizer, scheduler,
+                             epoch=epoch,
+                             metrics=best_epoch_metrics,
+                             config=config,
+                             class_names=class_names,
+                             mil_name=mil_name,
+                             is_best=True)
         else:
             es_counter += 1
             if do_es and epoch >= es_min and es_counter >= es_pat:
                 _log.info(f"Early stopping at epoch {epoch} (patience={es_pat})")
                 break
 
-        # Save history incrementally
-        pd.DataFrame(history_rows).to_csv(
-            os.path.join(exp_dir, 'training_history.csv'), index=False)
-
-    # Save final model
+    # ── Final checkpoint ───────────────────────────────────────────────────────
     final_path = os.path.join(exp_dir, 'final_model.pt')
-    torch.save({
-        'epoch':       epoch,
-        'model_state': model.state_dict(),
-        'config':      config,
-        'class_names': class_names,
-        'model_type':  mil_name,
-        'timestamp':   stamp,
-    }, final_path)
+    _save_checkpoint(final_path, model, optimizer, scheduler,
+                     epoch=epoch,
+                     metrics={'epoch': epoch, **{f'val_{k}': v
+                              for k, v in vl_met.items()}},
+                     config=config,
+                     class_names=class_names,
+                     mil_name=mil_name,
+                     is_best=False)
+
+    # ── Training curve plots ───────────────────────────────────────────────────
+    _plot_training_curves(exp_dir)
 
     _log.info(f"Training complete. Best val_loss={best_val_loss:.4f}")
     _log.info(f"Best model : {best_model_path}")
     _log.info(f"Final model: {final_path}")
-    _log.info(f"History    : {os.path.join(exp_dir, 'training_history.csv')}")
+    _log.info(f"History    : {os.path.join(exp_dir, 'train_history.csv')}")
     _log.info(f"Experiment : {exp_dir}")
 
     return exp_dir

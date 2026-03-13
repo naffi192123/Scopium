@@ -62,7 +62,7 @@ def load_backbone(model_type: str, weights_path: str = None, device=None):
         import torchvision.models as tv
         model = tv.resnet50(pretrained=True)
         model.fc = nn.Identity()
-        feat_dim, input_size = 1024, 224
+        feat_dim, input_size = 2048, 224
 
     elif model_type in ('rn50_histo', 'resnet50_histo'):
         import torchvision.models as tv

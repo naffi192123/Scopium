@@ -115,10 +115,12 @@ class ABMIL(nn.Module):
         self.classifier = nn.Linear(512, n_classes)
         initialize_weights(self)
 
-    def forward(self, h):
+    def forward(self, h, attention_only=False):
         h      = self.projection(h)                   # (N, 512)
         A      = self.attn(h)                         # (N, 1)
         A_soft = F.softmax(A, dim=0)                  # (N, 1)
+        if attention_only:
+            return A_soft.squeeze()                   # (N,)
         M      = (A_soft * h).sum(dim=0, keepdim=True)# (1, 512)
         logits = self.classifier(M)                   # (1, n_classes)
         Y_prob = F.softmax(logits, dim=1)
@@ -293,7 +295,7 @@ class DSMIL(nn.Module):
         self.bag_clf  = nn.Linear(512, n_classes)
         initialize_weights(self)
 
-    def forward(self, h):
+    def forward(self, h, attention_only=False):
         h     = self.proj(h)                           # (N, 512)
         inst_logits = self.inst_clf(h)                 # (N, n_classes)
         crit_idx    = inst_logits.argmax(dim=0)[1]     # most positive instance
@@ -302,6 +304,8 @@ class DSMIL(nn.Module):
         # attention: query=critical_instance, keys=all patches
         scores = (self.q(crit) * self.k(h)).sum(-1)   # (N,)
         A      = F.softmax(scores, dim=0)
+        if attention_only:
+            return A                                   # (N,)
         M      = (A.unsqueeze(1) * h).sum(0, keepdim=True)   # (1, 512)
 
         bag_logits = self.bag_clf(M)
