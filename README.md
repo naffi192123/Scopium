@@ -139,6 +139,12 @@ split:
   test_size: 0.2
   stratified: true
   random_seed: 42
+
+# Subfolder overrides (both optional, null = auto-derive)
+tiling:
+  patches_subfolder_override: null   # e.g. "patch256_step256_level0_otsu"
+feature_extraction:
+  features_subfolder_override: null  # e.g. "patch512_step512_level0__uni"
 ```
 
 ---

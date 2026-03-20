@@ -145,12 +145,24 @@ def build_mil_datasets(config: dict, dirs_dict: dict):
         logger.warning(f"class_names not in config — inferred: {class_names}")
 
     # Resolve feature pt_dir
-    p_size  = config['tiling'].get('patch_size', 512)
-    s_size  = config['tiling'].get('step_size', 512)
-    lvl     = config['tiling'].get('patch_level', 0)
-    pt_dir  = os.path.join(paths_cfg['results_dir'], 'features',
-                           f"patch{p_size}_step{s_size}_level{lvl}__{model_key}",
-                           'pt_files')
+    # The model name is ALWAYS appended (matching utils/config.py behaviour).
+    # features_subfolder_override sets the BASE name; __{model} is auto-appended.
+    p_size = config['tiling'].get('patch_size', 512)
+    s_size = config['tiling'].get('step_size', 512)
+    lvl    = config['tiling'].get('patch_level', 0)
+    auto_patch_base = f"patch{p_size}_step{s_size}_level{lvl}"
+
+    feat_base_override = config.get('feature_extraction', {}).get('features_subfolder_override')
+    if feat_base_override:
+        feature_base = feat_base_override
+    else:
+        feature_base = auto_patch_base
+
+    feature_subfolder = f"{feature_base}__{model_key}"
+
+    pt_dir = os.path.join(paths_cfg['results_dir'], 'features',
+                          feature_subfolder, 'pt_files')
+    logger.info(f"MIL feature source: {pt_dir}")
 
     splits_dir = os.path.join(paths_cfg['results_dir'], 'splits', task_name)
 

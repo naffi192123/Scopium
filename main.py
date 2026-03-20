@@ -22,6 +22,18 @@ def parse_args():
     parser.add_argument("--csv", type=str, default=None, help="[analyse/split] Path to annotation CSV")
     parser.add_argument("--experiment", type=str, default=None,
                         help="[evaluate/heatmap] Path to experiment dir (auto-detect latest if omitted)")
+    parser.add_argument(
+        "--patches", type=str, default=None,
+        metavar="SUBFOLDER",
+        help="[segment/extract] Override the patch subfolder name (or full path) inside "
+             "results/patches/. Takes priority over tiling.patches_subfolder_override in config.yaml. "
+             "Example: --patches patch256_step256_level0")
+    parser.add_argument(
+        "--features", type=str, default=None,
+        metavar="SUBFOLDER",
+        help="[extract/train/evaluate/heatmap] Override the feature subfolder name (or full path) inside "
+             "results/features/. Takes priority over feature_extraction.features_subfolder_override in "
+             "config.yaml. Example: --features patch512_step512_level0__uni")
     return parser.parse_args()
 
 def get_slide_paths(config):
@@ -112,11 +124,22 @@ def command_segment(config, dirs_dict, logger):
 def main():
     args = parse_args()
     config = load_config(args.config)
-    dirs_dict = setup_directories(config)
-    
+
+    # Pass CLI overrides into setup_directories so every downstream
+    # pipeline reads from / writes to the correct subfolder.
+    dirs_dict = setup_directories(
+        config,
+        patches_override=args.patches,
+        features_override=args.features,
+    )
+
     # Initialize global logger
     logger = setup_logger("wsi_framework", results_dir=config['paths']['results_dir'])
     logger.info(f"Initialized WSI Framework. Running command: {args.command}")
+    if args.patches:
+        logger.info(f"  Patch subfolder override  : {dirs_dict['patches']}")
+    if args.features:
+        logger.info(f"  Feature subfolder override: {dirs_dict['features']}")
     
     if args.command == "process":
         command_process(config, dirs_dict, logger)

@@ -39,15 +39,23 @@ filter:
 # ─── Patch Tiling ────────────────────────────────────────────────────────────
 tiling:
   patch_level: 0        # Pyramid level to extract patches from (0 = full res)
-  patch_size: 512       # Patch width/height in pixels
-  step_size: 512        # Step size between patches (= patch_size for no overlap)
+  patch_size: 512     # Patch width/height in pixels
+  step_size: 512       # Step size between patches (= patch_size for no overlap)
   contour_fn: "four_pt" # Contour check: four_pt | four_pt_hard | center | basic
   use_padding: true     # Allow patches that extend beyond the bounding box edge
   filter_blank: true    # Skip white/black (background) patches
   white_thresh: 15      # HSV saturation threshold for white-patch detection
   black_thresh: 40      # RGB mean threshold for black-patch detection
-  mode: "sequential"    # Execution mode: sequential or parallel
+  mode: "parallel"    # Execution mode: sequential or parallel
   num_workers: 8        # CPU Cores for parallel mode
+
+  # ── Subfolder override ───────────────────────────────────────────────────────
+  # By default patches are stored in patches/patch{size}_step{step}_level{lvl}/
+  # Set this to redirect segment output (and the extract input) to a custom name.
+  # CLI flag --patches takes priority over this key.
+  # Example: patches_subfolder_override: "patch256_step256_level0_otsu"
+  # By Default: patches_subfolder_override: null
+  patches_subfolder_override: null
 
 feature_extraction:
   # Deep learning feature encoder (e.g., 'rn50', 'hipt', 'uni')
@@ -64,6 +72,18 @@ feature_extraction:
   # 'auto' selects the canonical pipeline for the chosen model.
   # Other options: none, reinhard, macenko, uni_default, gigapath_default, etc.
   transforms: auto
+
+  # ── Subfolder override ───────────────────────────────────────────────────────
+  # By default features are stored in:
+  #   features/patch{size}_step{step}_level{lvl}__{model}/
+  #
+  # This key sets the BASE name; the model key is ALWAYS auto-appended.
+  # Example: features_subfolder_override: "patch512_step512_level0"
+  #   → resolves to: features/patch512_step512_level0__rn50/
+  #
+  # CLI flag --features takes priority over this key.
+  # Leave null to use the fully auto-derived name.
+  features_subfolder_override: null
 
 task:
   # Name of the classification task

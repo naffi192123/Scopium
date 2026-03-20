@@ -11,7 +11,7 @@ conda create -y -n dl_py39 python=3.9
 conda activate dl_py39
 cd path\to\wsi_framework
 pip install -r requirements.txt
-pip install scikit-learn   # for dataset splitting + metrics
+pip install scikit-learn
 ```
 
 > **Windows note:** Install OpenSlide binaries from [openslide.org](https://openslide.org/download/) and add `bin\` to your `PATH`.
@@ -30,20 +30,18 @@ pip install scikit-learn
 
 ## Dataset Structure
 
-Place your raw WSI files and optional annotations as follows:
-
 ```text
 wsi_framework/
 └── dataset/
     ├── slides/           ← .svs / .tif / .ndpi files go here
-    └── annotations/      ← (optional) manual annotation files
+    └── annotations/      ← (optional) CSV label files
 ```
 
 ---
 
 ## Configuration (`config/config.yaml`)
 
-The entire pipeline is driven by a single YAML file. Key sections:
+The entire pipeline is driven by a single YAML file.
 
 ### Paths
 ```yaml
@@ -70,6 +68,12 @@ tiling:
   contour_fn: four_pt # Tissue containment check strategy
   filter_blank: true  # Skip background patches
   mode: sequential    # sequential | parallel
+  num_workers: 8      # Workers for parallel mode
+
+  # Optional: override the auto-derived patch subfolder name.
+  # Default auto-name: patches/patch{size}_step{step}_level{lvl}/
+  # CLI flag --patches takes priority over this key.
+  patches_subfolder_override: null   # e.g. "patch256_step256_level0_otsu"
 ```
 
 ### Feature Extraction
@@ -79,15 +83,84 @@ feature_extraction:
   batch_size: 64      # Reduce if CUDA out of memory
   transforms: auto    # 'auto' | 'none' | 'reinhard' | 'macenko' | 'uni_default' | …
   weights_path: null  # Path to local weights (required for some models)
+
+  # Optional: override the base name of the feature subfolder.
+  # The model key is ALWAYS auto-appended.
+  # Default auto-name: features/patch{size}_step{step}_level{lvl}__{model}/
+  # Example: features_subfolder_override: "patch512_step512_level0"
+  #   → resolves to: features/patch512_step512_level0__rn50/
+  # CLI flag --features takes priority over this key.
+  features_subfolder_override: null
 ```
+
+---
+
+## Default Output Directory Naming
+
+By default every pipeline stage saves its outputs to a subfolder whose name encodes the active configuration parameters. This ensures **different tiling or extraction runs never overwrite each other**.
+
+| Stage | Default subfolder path | Key parameters encoded |
+|---|---|---|
+| `segment` — patches | `results/patches/patch{size}_step{step}_level{lvl}/` | `patch_size`, `step_size`, `patch_level` |
+| `segment` — masks | `results/masks/patch{size}_step{step}_level{lvl}/` | same as patches |
+| `extract` — features | `results/features/patch{size}_step{step}_level{lvl}__{model}/` | patch config + `feature_extraction.model` |
+
+**Example** with the default config (`patch_size=512`, `step_size=512`, `patch_level=0`, `model=rn50`):
+
+```
+results/patches/patch512_step512_level0/         ← .h5 patch coordinate files
+results/masks/patch512_step512_level0/           ← tissue mask PNGs
+results/features/patch512_step512_level0__rn50/  ← extracted feature tensors
+```
+
+---
+
+## Selecting a Specific Patch or Feature Subfolder
+
+Two independent override mechanisms let you direct any command at a specific pre-run configuration.
+
+### Patch subfolder (affects `segment` + `extract`)
+
+**YAML (persists across runs):**
+```yaml
+tiling:
+  patches_subfolder_override: "patch256_step256_level0_otsu"
+```
+
+**CLI flag (one-shot, highest priority):**
+```bash
+python main.py segment --config config/config.yaml --patches patch256_step256_level0_otsu
+python main.py extract --config config/config.yaml --patches patch256_step256_level0_otsu
+```
+
+### Feature subfolder (affects `extract`, `train`, `evaluate`, `heatmap`)
+
+> **Important:** The model name (`__{model}`) is **always** auto-appended to both the auto-derived name and any override value. You only need to supply the base name.
+
+**YAML:**
+```yaml
+feature_extraction:
+  features_subfolder_override: "patch512_step512_level0"
+  # resolves to: features/patch512_step512_level0__rn50/
+```
+
+**CLI flag:**
+```bash
+python main.py train --config config/config.yaml --features patch512_step512_level0
+# reads from: results/features/patch512_step512_level0__rn50/pt_files/
+```
+
+### Override priority (highest → lowest)
+
+1. CLI flag (`--patches` / `--features`)
+2. YAML key (`patches_subfolder_override` / `features_subfolder_override`)
+3. Auto-derived name from config parameters
 
 ---
 
 ## Command Reference
 
 ### 1. Dataset Scanning (`stats`)
-
-Scan `slides_dir` and generate a metadata CSV.
 
 ```bash
 python main.py stats --config config/config.yaml
@@ -98,8 +171,6 @@ python main.py stats --config config/config.yaml
 ---
 
 ### 2. Thumbnail & Metadata Extraction (`process`)
-
-Generate low-resolution thumbnail PNGs and full-resolution metadata JSONs.
 
 ```bash
 python main.py process --config config/config.yaml
@@ -113,22 +184,25 @@ python main.py process --config config/config.yaml
 
 ### 3. Tissue Segmentation & Patching (`segment`)
 
-Detect tissue regions using HSV colour-space segmentation and extract patch coordinates.
-Supports both `sequential` (default) and `parallel` execution via `tiling.mode`.
+Detects tissue regions using HSV colour-space segmentation and saves patch coordinates.
+Supports `sequential` (default) and `parallel` execution via `tiling.mode`.
 
 ```bash
 python main.py segment --config config/config.yaml
+
+# Write to a custom-named subfolder:
+python main.py segment --config config/config.yaml --patches my_512px_run
 ```
 
 **Output:**
-- `results/masks/<slide>_mask.png`
-- `results/patches/patch512_step512_level0/<slide>.h5`
+- `results/masks/patch512_step512_level0/<slide>_mask.png` — tissue mask
+- `results/patches/patch512_step512_level0/<slide>.h5` — patch coordinates
 
 Each `.h5` file contains:
 ```
 coords       (N, 2)  int64   — (x, y) top-left corner of each valid patch
 attrs:
-  patch_level         int     — pyramid level
+  patch_level         int     — pyramid level used
   patch_size          int     — tile width/height in pixels
 ```
 
@@ -138,8 +212,6 @@ attrs:
 
 #### Visualise Tiles on Thumbnail (`debug-segmentation`)
 
-Overlay every extracted patch coordinate onto the WSI thumbnail as a green bounding box. Ideal for verifying that tissue segmentation is capturing the right regions.
-
 ```bash
 python main.py debug-segmentation --config config/config.yaml
 ```
@@ -147,8 +219,6 @@ python main.py debug-segmentation --config config/config.yaml
 **Output:** `results/debug/segmented_tiles_thumbnail_<slide>.png`
 
 #### Extract a Single Tile (`extract-tile`)
-
-Pick one coordinate from the `.h5` file and extract the corresponding high-resolution tile for manual visual inspection.
 
 ```bash
 python main.py extract-tile --config config/config.yaml
@@ -160,17 +230,18 @@ python main.py extract-tile --config config/config.yaml
 
 ### 5. Feature Extraction (`extract`)
 
-Extracts deep learning embeddings from the patch coordinates using a GPU-accelerated backbone.
+Extracts deep learning embeddings from patch coordinates using a GPU-accelerated backbone.
 
 ```bash
+# Default: reads from patches/patch512_step512_level0/, writes to features/patch512_step512_level0__rn50/
 python main.py extract --config config/config.yaml
-```
 
-**How it works:**
-1. Loads the configured model (lazy imports — only the required backbone loads).
-2. Builds the preprocessing transform pipeline from the `transforms` key.
-3. For each slide: opens the WSI in the main thread → streams batches of tiles via PyTorch `DataLoader` → forwards through the model → writes results batch-by-batch.
-4. Saves two output files per slide.
+# Read from a specific patch subfolder, write features to a named base (model auto-appended):
+python main.py extract --config config/config.yaml \
+    --patches my_512px_run \
+    --features my_512px_run
+# writes to: results/features/my_512px_run__rn50/
+```
 
 **Output:**
 ```
@@ -178,8 +249,6 @@ results/features/patch512_step512_level0__rn50/
     ├── h5_files/<slide>.h5    ← HDF5: 'features' (N, D) + 'coords' (N, 2)
     └── pt_files/<slide>.pt    ← PyTorch FloatTensor (N, D)
 ```
-
-Folder names encode patch parameters and model name, so different configurations never overwrite each other.
 
 ---
 
@@ -210,7 +279,7 @@ Set via `feature_extraction.transforms` in `config.yaml`:
 | Key | Description |
 |---|---|
 | `auto` | Selects the canonical pipeline for the chosen model **(recommended)** |
-| `none` | `ToTensor` + ImageNet normalisation `(0.485/0.456/0.406)` |
+| `none` | `ToTensor` + ImageNet normalisation |
 | `reinhard` | Reinhard H&E stain normalisation → ImageNet range |
 | `macenko` | Macenko stain normalisation (requires `torchstain`) |
 | `uni_default` | Resize 224 + ImageNet normalisation |
@@ -218,21 +287,10 @@ Set via `feature_extraction.transforms` in `config.yaml`:
 | `hibou_default` | Resize/CenterCrop 224 + Hibou-specific statistics |
 | `kaiko_default` | Resize/CenterCrop 224 + 0.5/0.5/0.5 normalisation |
 | `optimus_default` | CenterCrop 224 + Optimus statistics |
-| `colourjitter` | Random colour jitter (no normalisation) |
-| `colourjitternorm` | Random colour jitter + ImageNet normalisation |
-
-**Stain normalisation note:**  
-`reinhard` and `macenko` use the pattern:
-```
-PIL → ToTensor → ×255 → NormClass() → [0,1] (C,H,W)
-```
-This matches what `torchstain`'s PyTorch backend expects internally.
 
 ---
 
 ## GPU Memory Guide
-
-Batch size affects GPU memory linearly. Reference values for a **512×512 tile pipeline**:
 
 | GPU VRAM | Recommended `batch_size` |
 |---|---|
@@ -250,7 +308,7 @@ python main.py analyse --config config/config.yaml
 python main.py analyse --config config/config.yaml --csv path/to/labels.csv
 ```
 
-Reports: CSV format, class distribution, duplicates, missing labels, SVS file coverage, feature file coverage.
+Reports: CSV format, class distribution, duplicates, missing labels, slide file coverage, feature file coverage.
 
 ---
 
@@ -260,12 +318,12 @@ Reports: CSV format, class distribution, duplicates, missing labels, SVS file co
 python main.py split --config config/config.yaml
 ```
 
-Config options (`split` block in `config.yaml`):
+Config options (`split` block):
 
 ```yaml
 split:
-  type: train_test       # train_test | train_val_test
-  train_size: 0.8
+  type: train_val_test   # train_test | train_val_test
+  train_size: 0.7
   val_size: 0.1          # only for train_val_test
   test_size: 0.2
   stratified: true
@@ -280,6 +338,14 @@ split:
 
 ```bash
 python main.py train --config config/config.yaml
+
+# Train using a specific feature set (model auto-appended):
+python main.py train --config config/config.yaml --features patch512_step512_level0
+```
+
+The **default** feature directory is derived automatically from the active `tiling` and `feature_extraction` config keys:
+```
+results/features/patch{size}_step{step}_level{lvl}__{model}/pt_files/
 ```
 
 Config options:
@@ -293,7 +359,7 @@ task:
 
 mil:
   model: abmil          # abmil | clam_sb | clam_mb | mean_pool | max_pool | transmil | dsmil
-  encoding_size: 1536   # MUST match feature extractor output dim
+  encoding_size: 2048   # MUST match feature extractor output dim
   hidden_dim: 256
   dropout: 0.25
   k_sample: 8           # CLAM only
@@ -309,10 +375,11 @@ training:
 ```
 
 **Outputs:** `results/experiments/<task>/<model>_<timestamp>/`
-- `best_model.pt` — dict: weights, optimizer, scheduler, config, class_map, metrics, timestamp
+- `best_model.pt` — weights, optimizer, config, class map, metrics
 - `final_model.pt`
-- `training_history.csv` — loss, acc, auc, f1, lr, time per epoch
+- `train_history.csv` — loss, acc, auc, f1, lr, time per epoch
 - `config_snapshot.yaml`
+- `plots/` — `train_loss_curve.png`, `val_auc_curve.png`, `val_acc_curve.png`, `learning_rate.png`
 
 ---
 
@@ -323,12 +390,13 @@ training:
 python main.py evaluate --config config/config.yaml
 
 # Specify experiment directory:
-python main.py evaluate --config config/config.yaml --experiment results/experiments/metastasis/abmil_20260313_010000
+python main.py evaluate --config config/config.yaml \
+    --experiment results/experiments/metastasis/abmil_20260318_010000
 ```
 
 **Outputs:** `<experiment_dir>/evaluate/`
-- `predictions.csv` — slide_id, true_label, pred_label, prob_class0, prob_class1, ...
-- `roc_data.csv` — fpr, tpr, thresholds (replot without rerunning)
+- `predictions.csv` — slide_id, true_label, pred_label, prob_class0, prob_class1, …
+- `roc_data.csv` — fpr, tpr, thresholds
 - `confusion_matrix.csv`
 - `classification_report.txt`
 - `metrics.json` — accuracy, balanced_accuracy, f1, precision, recall, roc_auc
@@ -343,7 +411,8 @@ Only supported for attention-based models: `abmil`, `clam_sb`, `clam_mb`, `dsmil
 ```bash
 python main.py heatmap --config config/config.yaml
 # Or specify experiment:
-python main.py heatmap --config config/config.yaml --experiment results/experiments/metastasis/abmil_...
+python main.py heatmap --config config/config.yaml \
+    --experiment results/experiments/metastasis/abmil_...
 ```
 
 **Outputs:** `<experiment_dir>/heatmaps/<slide_id>/`
@@ -365,9 +434,44 @@ python main.py heatmap --config config/config.yaml --experiment results/experime
 | `transmil` | Transformer MIL (Shao 2021) | No |
 | `dsmil` | Dual-Stream MIL (Li 2021) | Yes |
 
+> Heatmaps are only generated for attention-based models.
+
+---
+
+## Full Multi-config Workflow Example
+
+```bash
+# 1. Tile at 512 px (default auto-name)
+python main.py segment --config config/config.yaml
+# → results/patches/patch512_step512_level0/
+# → results/masks/patch512_step512_level0/
+
+# 2. Tile at 256 px into a named subfolder
+python main.py segment --config config/config.yaml --patches patch256_step256_level0
+# → results/patches/patch256_step256_level0/
+# → results/masks/patch256_step256_level0/
+
+# 3. Extract features from the 512 px patches with ResNet-50 (default)
+python main.py extract --config config/config.yaml
+# → results/features/patch512_step512_level0__rn50/
+
+# 4. Extract features from the 256 px patches with UNI
+#    (change model in config first, then override the patch subfolder)
+python main.py extract --config config/config.yaml \
+    --patches patch256_step256_level0 \
+    --features patch256_step256_level0
+# → results/features/patch256_step256_level0__uni/
+
+# 5. Train MIL using default (512 px + rn50) features
+python main.py train --config config/config.yaml
+
+# 6. Train MIL using 256 px + UNI features
+python main.py train --config config/config.yaml --features patch256_step256_level0
+# reads from: results/features/patch256_step256_level0__uni/pt_files/
+```
+
 ---
 
 ## Logging
 
-All commands write a structured log to `results/wsi_framework.log` (rotating, 10 MB).
-
+All commands write a structured log to `results/wsi_framework.log` (rotating, 10 MB max).
