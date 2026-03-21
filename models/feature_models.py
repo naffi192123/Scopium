@@ -10,10 +10,13 @@ Design
   are absent.
 * Returns (model, feat_dim, input_size) so callers know the embedding
   dimensionality without hard-coding it.
+* DataParallel is only applied when explicitly requested via
+  ``use_data_parallel=True`` (single-process, multi-GPU mode).
+  In the preferred multi-process extraction path each worker owns a single GPU
+  so DataParallel is counter-productive.
 """
 
 import os
-import sys
 import logging
 
 import torch
@@ -22,19 +25,27 @@ import torch.nn as nn
 logger = logging.getLogger(__name__)
 
 
-def load_backbone(model_type: str, weights_path: str = None, device=None):
+def load_backbone(
+    model_type: str,
+    weights_path: str = None,
+    device=None,
+    use_data_parallel: bool = False,
+):
     """
     Load a backbone model.
 
     Parameters
     ----------
-    model_type   : str   Key from the supported list below.
-    weights_path : str   Path to local weights file (required for some models).
-    device       : torch.device  Defaults to CUDA if available.
+    model_type        : str   Key from the supported list below.
+    weights_path      : str   Path to local weights file (required for some models).
+    device            : torch.device  Defaults to CUDA if available.
+    use_data_parallel : bool  Wrap in DataParallel when >1 GPU is present.
+                              Set to False (default) in multi-process extraction
+                              where each process already owns a single GPU.
 
     Returns
     -------
-    model      : nn.Module in eval mode, on device, DataParallel if >1 GPU
+    model      : nn.Module in eval mode, on device
     feat_dim   : int   Output embedding dimensionality
     input_size : int   Square patch dimension the model expects
     """
@@ -52,7 +63,6 @@ def load_backbone(model_type: str, weights_path: str = None, device=None):
         feat_dim, input_size = 512, 224
 
     elif model_type in ('rn18_histo', 'resnet18_histo'):
-        # ResNet-18 with pretrained=False and normalised differently
         import torchvision.models as tv
         model = tv.resnet18(pretrained=False)
         model.fc = nn.Identity()
@@ -154,10 +164,16 @@ def load_backbone(model_type: str, weights_path: str = None, device=None):
 
     model = model.to(device)
 
-    # Multi-GPU via DataParallel (mirrors reference behaviour)
-    if torch.cuda.device_count() > 1:
+    # DataParallel is only useful in single-process mode.
+    # In multi-process extraction each worker owns one GPU — skip wrapping.
+    if use_data_parallel and torch.cuda.device_count() > 1:
         model = nn.DataParallel(model)
         logger.info(f"DataParallel across {torch.cuda.device_count()} GPUs.")
+    elif torch.cuda.device_count() > 1 and not use_data_parallel:
+        logger.info(
+            f"Multi-GPU detected ({torch.cuda.device_count()} GPUs). "
+            "DataParallel skipped — using per-process GPU assignment."
+        )
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     size_mb  = sum(

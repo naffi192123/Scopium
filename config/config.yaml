@@ -58,16 +58,34 @@ tiling:
   patches_subfolder_override: null
 
 feature_extraction:
-  # Deep learning feature encoder (e.g., 'rn50', 'hipt', 'uni')
+  # Deep learning feature encoder (e.g., 'rn50', 'uni', 'virchow')
   model: rn50
-  
-  # Hardware and batching
-  batch_size: 64
-  num_workers: 4
-  
-  # Resizes the raw extracted patch before feeding to model (set to -1 to disable)
+
+  # ── Batching ─────────────────────────────────────────────────────────────────
+  # Per-GPU batch size. A100 (80 GB) can handle 256+ for most ViT models.
+  batch_size: 256
+
+  # ── Multi-GPU parallelism ────────────────────────────────────────────────────
+  # Number of GPU worker processes to spawn. Each process gets a disjoint
+  # subset of slides. Defaults to the number of available CUDA GPUs.
+  # Set to 1 to disable multi-process mode (useful for debugging).
+  num_extraction_workers: 4   # set to 1 for single-GPU / debug
+
+  # DataLoader workers PER GPU process. These pre-fetch patches from disk
+  # while the GPU runs the forward pass, dramatically raising GPU utilisation.
+  # 4–8 is recommended. Set to 0 to revert to the old single-thread behaviour.
+  dataloader_workers: 4
+
+  # Pin host memory for faster CPU → GPU tensor transfers (recommended: true)
+  pin_memory: true
+
+  # FP16 autocast (torch.cuda.amp). Doubles throughput on A100/H100 GPUs.
+  # Features are cast back to float32 before saving.
+  use_amp: true
+
+  # Resizes raw extracted patch before feeding to model (set to -1 to disable)
   target_patch_size: -1
-  
+
   # Transform preset to apply before feature extraction.
   # 'auto' selects the canonical pipeline for the chosen model.
   # Other options: none, reinhard, macenko, uni_default, gigapath_default, etc.
