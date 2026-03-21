@@ -277,12 +277,30 @@ def command_train(config: dict, dirs_dict: dict, log=None):
     train_cfg = config.get('training', {})
     nw        = int(train_cfg.get('num_workers', 0))
 
+    # Guard: raise a clear error if the training dataset is empty (0 valid bags).
+    # This almost always means features haven't been extracted yet, or the wrong
+    # feature subfolder is selected.
+    if len(datasets['train']) == 0:
+        feat_dir = dirs_dict.get('features', '<unknown>')
+        _log.error(
+            "Training dataset has 0 valid bags. No .pt feature files were found."
+            f"\n  Expected features in : {feat_dir}/pt_files/"
+            f"\n  To fix, either:"
+            f"\n    1. Run feature extraction first:  python main.py extract --config ..."
+            f"\n    2. Point to an existing feature set (model name auto-appended):"
+            f"\n       python main.py train --features patch512_step512_level0"
+            f"\n       or set feature_extraction.features_subfolder_override in config.yaml")
+        return
+
     train_loader = DataLoader(datasets['train'], batch_size=1, shuffle=True,
                               num_workers=nw, collate_fn=mil_collate_fn)
     val_loader   = None
     if 'val' in datasets:
-        val_loader = DataLoader(datasets['val'], batch_size=1, shuffle=False,
-                                num_workers=nw, collate_fn=mil_collate_fn)
+        if len(datasets['val']) == 0:
+            _log.warning("Validation dataset has 0 valid bags — skipping validation.")
+        else:
+            val_loader = DataLoader(datasets['val'], batch_size=1, shuffle=False,
+                                    num_workers=nw, collate_fn=mil_collate_fn)
 
     # ── Model ──────────────────────────────────────────────────────────────────
     model, n_params = build_mil_model(config)
