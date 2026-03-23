@@ -150,21 +150,32 @@ def command_classify(config: dict, dirs_dict: dict, log=None):
         os.makedirs(filtered_dirs[cat_upper]["h5"], exist_ok=True)
         os.makedirs(filtered_dirs[cat_upper]["pt"], exist_ok=True)
 
-    # ── Find feature files ────────────────────────────────────────────────────
-    if fmt == "h5":
-        feat_subdir = os.path.join(features_dir, "h5_files")
-        file_ext    = ".h5"
-        loader_fn   = _load_h5
-    else:
-        feat_subdir = os.path.join(features_dir, "pt_files")
-        file_ext    = ".pt"
-        loader_fn   = _load_pt
+    # ── Find feature files — auto-detect available format ─────────────────────
+    # Preferred: h5 (carries real patch coordinates).
+    # Fallback:  pt (coordinates will be sequential patch indices).
+    h5_subdir = os.path.join(features_dir, "h5_files")
+    pt_subdir  = os.path.join(features_dir, "pt_files")
 
-    if not os.path.isdir(feat_subdir):
+    if fmt == "h5" and os.path.isdir(h5_subdir):
+        feat_subdir, file_ext, loader_fn = h5_subdir, ".h5", _load_h5
+    elif fmt == "pt" and os.path.isdir(pt_subdir):
+        feat_subdir, file_ext, loader_fn = pt_subdir, ".pt", _load_pt
+    elif os.path.isdir(h5_subdir):
+        # Auto-fallback to h5 when requested format isn't available
+        _log.info(
+            f"input_format='{fmt}' not available; auto-detected h5_files.")
+        feat_subdir, file_ext, loader_fn = h5_subdir, ".h5", _load_h5
+    elif os.path.isdir(pt_subdir):
+        # Auto-fallback to pt
+        _log.info(
+            f"input_format='{fmt}' not available; auto-detected pt_files.")
+        feat_subdir, file_ext, loader_fn = pt_subdir, ".pt", _load_pt
+    else:
         _log.error(
-            f"Feature subdirectory not found: {feat_subdir}\n"
-            f"  Run `python main.py extract --config ...` first, or "
-            f"check input_format (currently '{fmt}').")
+            f"No feature subdirectory found in: {features_dir}\n"
+            f"  Expected: {h5_subdir}\n"
+            f"         or: {pt_subdir}\n"
+            f"  Run `python main.py extract --config ...` first.")
         return
 
     feat_files = sorted(
