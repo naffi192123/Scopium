@@ -119,22 +119,27 @@ def mil_collate_fn(batch):
     return features, labels, slide_ids
 
 
-def build_mil_datasets(config: dict, dirs_dict: dict):
+def build_mil_datasets(config: dict, dirs_dict: dict, pt_dir: str = None):
     """
     Build train / val (optional) / test MILBagDataset instances.
 
+    Parameters
+    ----------
+    config    : full parsed YAML config
+    dirs_dict : directory dict from utils.config.setup_directories
+    pt_dir    : explicit path to the pt_files directory.
+                If None, it is resolved from dirs_dict['features']/pt_files,
+                which honours CLI --features and config overrides.
+
     Returns
     -------
-    dict of {split_name: MILBagDataset}  e.g. {'train': ..., 'test': ...}
+    (dict of {split_name: MILBagDataset}, list of class_names)
     """
     task_cfg  = config.get('task', {})
-    feat_cfg  = config.get('feature_extraction', {})
     paths_cfg = config.get('paths', {})
-    split_cfg = config.get('split', {})
 
     class_names = task_cfg.get('class_names', None)
     task_name   = task_cfg.get('name', 'task')
-    model_key   = feat_cfg.get('model', 'rn50')
 
     if class_names is None:
         # fall back: infer from training CSV
@@ -144,25 +149,36 @@ def build_mil_datasets(config: dict, dirs_dict: dict):
         class_names = sorted(df.iloc[:, -1].astype(str).unique().tolist())
         logger.warning(f"class_names not in config — inferred: {class_names}")
 
-    # Resolve feature pt_dir
-    # The model name is ALWAYS appended (matching utils/config.py behaviour).
-    # features_subfolder_override sets the BASE name; __{model} is auto-appended.
-    p_size = config['tiling'].get('patch_size', 512)
-    s_size = config['tiling'].get('step_size', 512)
-    lvl    = config['tiling'].get('patch_level', 0)
-    auto_patch_base = f"patch{p_size}_step{s_size}_level{lvl}"
+    # ── Resolve pt_dir ────────────────────────────────────────────────────────
+    # Priority:  explicit pt_dir arg > dirs_dict['features'] > auto-derive
+    if pt_dir is None:
+        feat_dir = dirs_dict.get('features')
+        if feat_dir:
+            pt_dir = os.path.join(feat_dir, 'pt_files')
+        else:
+            # Legacy fallback: derive from config keys (backward compat)
+            feat_cfg  = config.get('feature_extraction', {})
+            model_key = feat_cfg.get('model', 'rn50')
+            p_size    = config['tiling'].get('patch_size', 512)
+            s_size    = config['tiling'].get('step_size', 512)
+            lvl       = config['tiling'].get('patch_level', 0)
+            base_ovr  = feat_cfg.get('features_subfolder_override')
+            feat_base = base_ovr or f"patch{p_size}_step{s_size}_level{lvl}"
+            pt_dir    = os.path.join(
+                paths_cfg['results_dir'], 'features',
+                f"{feat_base}__{model_key}", 'pt_files')
+            logger.warning(
+                "build_mil_datasets: dirs_dict has no 'features' key — "
+                f"falling back to auto-derived pt_dir: {pt_dir}")
 
-    feat_base_override = config.get('feature_extraction', {}).get('features_subfolder_override')
-    if feat_base_override:
-        feature_base = feat_base_override
-    else:
-        feature_base = auto_patch_base
+    # ── Validate ──────────────────────────────────────────────────────────────
+    if not os.path.isdir(pt_dir):
+        logger.error(
+            f"Feature pt_files directory not found: {pt_dir}\n"
+            "  Run `python main.py extract --config ...` first, or use "
+            "--features to point to an existing feature set.")
 
-    feature_subfolder = f"{feature_base}__{model_key}"
-
-    pt_dir = os.path.join(paths_cfg['results_dir'], 'features',
-                          feature_subfolder, 'pt_files')
-    logger.info(f"MIL feature source: {pt_dir}")
+    logger.info(f"MIL feature source (pt_files): {pt_dir}")
 
     splits_dir = os.path.join(paths_cfg['results_dir'], 'splits', task_name)
 

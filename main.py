@@ -32,10 +32,17 @@ def parse_args():
              "Example: --patches patch256_step256_level0")
     parser.add_argument(
         "--features", type=str, default=None,
+        metavar="BASE",
+        help="[extract/train/evaluate/heatmap/classify] Override feature subfolder BASE name "
+             "(model is auto-appended). Takes priority over feature_extraction.features_subfolder_override. "
+             "Example: --features patch512_step512_level0  → reads features/patch512_step512_level0__rn50/")
+    parser.add_argument(
+        "--feature_dir", type=str, default=None,
         metavar="SUBFOLDER",
-        help="[extract/train/evaluate/heatmap] Override the feature subfolder name (or full path) inside "
-             "results/features/. Takes priority over feature_extraction.features_subfolder_override in "
-             "config.yaml. Example: --features patch512_step512_level0__uni")
+        help="[train/evaluate/heatmap/classify] Exact feature subfolder name (model NOT auto-appended). "
+             "Use to point directly to an existing directory. "
+             "Takes highest priority over --features and config. "
+             "Example: --feature_dir patch512_step512_level0__uni")
     parser.add_argument(
         "--slide", type=str, default=None,
         metavar="SLIDE_ID",
@@ -132,21 +139,27 @@ def main():
     args = parse_args()
     config = load_config(args.config)
 
-    # Pass CLI overrides into setup_directories so every downstream
-    # pipeline reads from / writes to the correct subfolder.
+    # --feature_dir takes highest priority: it is the EXACT subfolder name (model not appended).
+    # --features is the base name (model auto-appended by setup_directories).
+    features_override = args.feature_dir or args.features
+
     dirs_dict = setup_directories(
         config,
         patches_override=args.patches,
-        features_override=args.features,
+        features_override=features_override,
+        exact_features=bool(args.feature_dir),
     )
 
     # Initialize global logger
     logger = setup_logger("wsi_framework", results_dir=config['paths']['results_dir'])
     logger.info(f"Initialized WSI Framework. Running command: {args.command}")
     if args.patches:
-        logger.info(f"  Patch subfolder override  : {dirs_dict['patches']}")
-    if args.features:
-        logger.info(f"  Feature subfolder override: {dirs_dict['features']}")
+        logger.info(f"  Patch subfolder    : {dirs_dict['patches']}")
+    feat_ovr = getattr(args, 'feature_dir', None) or getattr(args, 'features', None)
+    if feat_ovr:
+        logger.info(f"  Feature dir override → {dirs_dict['features']}")
+    else:
+        logger.info(f"  Feature dir (auto)   : {dirs_dict['features']}")
     
     if args.command == "process":
         command_process(config, dirs_dict, logger)

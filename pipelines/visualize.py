@@ -158,25 +158,44 @@ def command_heatmap(config: dict, dirs_dict: dict, log=None,
             f"Heatmaps only supported for: abmil, clam_sb, clam_mb, dsmil.")
         return
 
-    # ── Resolve paths ──────────────────────────────────────────────────────────
-    feat_cfg  = ckpt_config.get('feature_extraction', {})
-    tiling    = ckpt_config.get('tiling', {})
-    paths_cfg = ckpt_config.get('paths', {})
-
-    model_key   = feat_cfg.get('model', 'rn50')
+    # ── Resolve feature h5 directory ──────────────────────────────────────────
+    # Priority: dirs_dict['features'] (set by --features CLI / config override)
+    #           → falls back to ckpt_config paths for backward compat
+    tiling      = ckpt_config.get('tiling', {})
     p_size      = tiling.get('patch_size', 512)
-    s_size      = tiling.get('step_size', 512)
     lvl         = tiling.get('patch_level', 0)
     patch_level = int(lvl)
 
-    feat_dir   = os.path.join(paths_cfg['results_dir'], 'features',
-                              f"patch{p_size}_step{s_size}_level{lvl}__{model_key}")
+    if dirs_dict.get('features'):
+        feat_dir = dirs_dict['features']
+    else:
+        # Backward compat: derive from checkpoint config
+        feat_cfg  = ckpt_config.get('feature_extraction', {})
+        paths_ckpt = ckpt_config.get('paths', {})
+        model_key = feat_cfg.get('model', 'rn50')
+        s_size    = tiling.get('step_size', 512)
+        feat_dir  = os.path.join(
+            paths_ckpt['results_dir'], 'features',
+            f"patch{p_size}_step{s_size}_level{lvl}__{model_key}")
+        _log.warning(
+            f"dirs_dict has no 'features' key — falling back to: {feat_dir}")
+
     h5_dir     = os.path.join(feat_dir, 'h5_files')
-    slides_dir = paths_cfg['slides_dir']
+    slides_dir = config['paths']['slides_dir']
     slide_ext  = config['dataset'].get('slide_extension', '.svs')
+
+    if not os.path.isdir(h5_dir):
+        _log.error(
+            f"Feature h5_files directory not found: {h5_dir}\n"
+            "  Run `python main.py extract --config ...` first, or use "
+            "--features to point to an existing feature set.")
+        return
+
+    _log.info(f"  Feature dir  : {feat_dir}")
 
     # Load test slides from split CSV
     task_name = ckpt_config['task']['name']
+    paths_cfg = config.get('paths', {})
     test_csv  = os.path.join(paths_cfg['results_dir'], 'splits', task_name, 'test.csv')
     if not os.path.exists(test_csv):
         _log.error(f"test.csv not found: {test_csv}")

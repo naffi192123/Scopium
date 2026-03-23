@@ -39,6 +39,12 @@ python main.py evaluate --config config/config.yaml
 
 # 10. Generate attention heatmaps
 python main.py heatmap --config config/config.yaml
+
+# 11. Run patch-level classifier inference
+python main.py classify --config config/config.yaml
+
+# 12. Generate prediction heatmaps
+python main.py classify-heatmap --config config/config.yaml
 ```
 
 ---
@@ -58,6 +64,8 @@ python main.py heatmap --config config/config.yaml
 | `train` | MIL model training with history + checkpointing |
 | `evaluate` | Evaluation metrics, ROC curves, confusion matrix |
 | `heatmap` | Attention heatmap overlay + top-20 tile extraction |
+| `classify` | Patch-level classifier inference → CSV predictions + filtered features |
+| `classify-heatmap` | Tile-level prediction heatmaps (categorical or confidence) |
 
 ---
 
@@ -75,6 +83,8 @@ python main.py heatmap --config config/config.yaml
 | MIL Training | ✅ | `pipelines/train.py` |
 | MIL Evaluation | ✅ | `pipelines/evaluate.py` |
 | Attention Heatmaps | ✅ | `pipelines/visualize.py` |
+| Patch Classification | ✅ | `pipelines/classify.py` |
+| Prediction Heatmaps | ✅ | `pipelines/classify_heatmap.py` |
 
 ---
 
@@ -140,12 +150,20 @@ split:
   stratified: true
   random_seed: 42
 
-# Subfolder overrides (both optional, null = auto-derive)
+# Feature subfolder overrides (both optional, null = auto-derive)
 tiling:
   patches_subfolder_override: null   # e.g. "patch256_step256_level0_otsu"
 feature_extraction:
-  features_subfolder_override: null  # e.g. "patch512_step512_level0__uni"
+  # BASE name — model always auto-appended:
+  features_subfolder_override: null  # e.g. "patch512_step512_level0"
+  # EXACT name — model NOT appended (highest config priority):
+  features_dir_override: null        # e.g. "patch512_step512_level0__uni"
 ```
+
+> **CLI flags** take priority over config keys:
+> - `--feature_dir patch512_step512_level0__uni` — exact dir, model NOT appended
+> - `--features patch512_step512_level0` — base dir, model auto-appended
+> - `--patches patch256_step256_level0` — selects patch coordinate set
 
 ---
 

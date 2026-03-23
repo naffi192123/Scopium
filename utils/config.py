@@ -43,7 +43,8 @@ def validate_config(config):
             print(f"  - {field}", file=sys.stderr)
         sys.exit(1)
 
-def setup_directories(config, patches_override=None, features_override=None):
+def setup_directories(config, patches_override=None,
+                      features_override=None, exact_features=False):
     """
     Creates the necessary directories for results as dictated by the config.
     Returns a dictionary of the created paths for easy access across modules.
@@ -61,22 +62,34 @@ def setup_directories(config, patches_override=None, features_override=None):
 
       Default:  ``masks/patch{size}_step{step}_level{lvl}/``
 
-    **Features** subfolder (used by ``extract``, ``train``, ``evaluate``, ``heatmap``):
+    **Features** subfolder (used by ``extract``, ``train``, ``evaluate``,
+    ``heatmap``, ``classify``, ``classify-heatmap``):
 
-      The model name is **always appended** (``__{model}``) to both the
-      auto-derived name and any override value, ensuring each
-      (patches_config, model) combination gets its own directory.
+      Three mechanisms, applied in priority order (highest → lowest):
 
-      Default auto-name:  ``features/patch{size}_step{step}_level{lvl}__{model}/``
-      Override (YAML):    ``feature_extraction.features_subfolder_override: "my_base"``
-                          → resolves to ``features/my_base__{model}/``
-      Override (CLI):     ``--features my_base``
-                          → resolves to ``features/my_base__{model}/``
+      1. CLI ``--feature_dir`` (exact name, model NOT appended):
+            exact_features=True is passed; features_override = the exact subfolder.
+            → resolves to ``features/<features_override>/``
+
+      2. CLI ``--features`` (base name, model IS auto-appended):
+            exact_features=False, features_override = base name.
+            → resolves to ``features/<features_override>__{model}/``
+
+      3. YAML ``feature_extraction.features_subfolder_override`` (base name):
+            → resolves to ``features/<override>__{model}/``
+
+      4. YAML ``feature_extraction.features_dir_override`` (exact name):
+            → resolves to ``features/<features_dir_override>/``
+
+      5. Auto-derived:
+            → resolves to ``features/patch{size}_step{step}_level{lvl}__{model}/``
 
     Override priorities (highest → lowest):
-      1. CLI keyword argument (``patches_override`` / ``features_override``)
-      2. YAML config key     (``patches_subfolder_override`` / ``features_subfolder_override``)
-      3. Auto-derived name
+      1. CLI --feature_dir  (exact, exact_features=True)
+      2. CLI --features     (base, model auto-appended)
+      3. YAML features_subfolder_override  (base, model auto-appended)
+      4. YAML features_dir_override        (exact)
+      5. Auto-derived
     """
     slides_dir   = config['paths']['slides_dir']
     results_root = config['paths']['results_dir']
@@ -105,14 +118,28 @@ def setup_directories(config, patches_override=None, features_override=None):
         patch_str = config['tiling'].get('patches_subfolder_override') or auto_patch_str
 
     # ── Resolve features subfolder ─────────────────────────────────────────────
-    # The model name is ALWAYS appended so different backbones never share a dir.
-    # The override (CLI or config key) sets the BASE name; model is auto-appended.
-    if features_override:
-        feature_base = os.path.basename(features_override.rstrip("\\/"))
-    else:
-        feature_base = config['feature_extraction'].get('features_subfolder_override') or patch_str
+    feat_cfg = config.get('feature_extraction', {})
 
-    feature_str = f"{feature_base}__{f_model}"
+    if features_override and exact_features:
+        # --feature_dir: exact name, no model appended
+        feature_str = os.path.basename(features_override.rstrip("\\/"))
+
+    elif features_override and not exact_features:
+        # --features: base name, model auto-appended
+        feature_base = os.path.basename(features_override.rstrip("\\/"))
+        feature_str  = f"{feature_base}__{f_model}"
+
+    elif feat_cfg.get('features_subfolder_override'):
+        # YAML base override (model always appended)
+        feature_str = f"{feat_cfg['features_subfolder_override']}__{f_model}"
+
+    elif feat_cfg.get('features_dir_override'):
+        # YAML exact override (model NOT appended — user provides full name)
+        feature_str = feat_cfg['features_dir_override']
+
+    else:
+        # Auto-derive
+        feature_str = f"{auto_patch_str}__{f_model}"
 
     # ── Build and create all result subdirectories ─────────────────────────────
     subdirs = {

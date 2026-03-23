@@ -28,7 +28,9 @@ wsi_framework/
 │   ├── split.py                # split: train/val/test CSV generation
 │   ├── train.py                # train: MIL training loop + checkpointing + plots
 │   ├── evaluate.py             # evaluate: metrics, ROC curves, confusion matrix
-│   └── visualize.py            # heatmap: attention heatmap overlay + top-tile extraction
+│   ├── visualize.py            # heatmap: attention heatmap overlay + top-tile extraction
+│   ├── classify.py             # classify: batched GPU patch inference + features filtering
+│   └── classify_heatmap.py     # classify-heatmap: categorical/confidence prediction heatmaps
 ├── utils/
 │   ├── config.py               # YAML loader, validator, directory initialiser
 │   ├── transforms.py           # Named transform registry (reinhard, macenko, uni_default…)
@@ -60,6 +62,8 @@ wsi_framework/
 | `pipelines/train.py` | MIL training loop: AdamW + ReduceLROnPlateau + early stopping. Saves `best_model.pt`, `final_model.pt`, `train_history.csv`, `config_snapshot.yaml`, and loss/AUC/LR curve PNGs. |
 | `pipelines/evaluate.py` | Loads experiment checkpoint, runs inference on test set, outputs `predictions.csv`, `roc_data.csv`, `confusion_matrix.csv`, `metrics.json`, and `.png` figures. |
 | `pipelines/visualize.py` | Generates per-slide attention heatmaps from stored `.h5` feature+coord files and model attention scores. Extracts top-20 highest-attention tiles. |
+| `pipelines/classify.py` | Patch inference loop: Loads pretrained classifier and `.h5`/`.pt` features, generates per-WSI patch prediction CSVs, and saves filtered features per active category. |
+| `pipelines/classify_heatmap.py` | Prediction visualizer: Reads `classify.py` CSVs and WSI thumbnails to render tile-level categorical maps or class-specific confidence heatmaps. Saves top-K patches. |
 
 ---
 

@@ -91,17 +91,35 @@ feature_extraction:
   # Other options: none, reinhard, macenko, uni_default, gigapath_default, etc.
   transforms: auto
 
-  # ── Subfolder override ───────────────────────────────────────────────────────
-  # By default features are stored in:
-  #   features/patch{size}_step{step}_level{lvl}__{model}/
+  # ── Feature subfolder override ────────────────────────────────────────────────
+  # Five resolution tiers (highest priority first):
   #
-  # This key sets the BASE name; the model key is ALWAYS auto-appended.
-  # Example: features_subfolder_override: "patch512_step512_level0"
-  #   → resolves to: features/patch512_step512_level0__rn50/
+  #  1. CLI --feature_dir <exact>         exact subfolder, model NOT appended
+  #     → results/features/<exact>/
   #
-  # CLI flag --features takes priority over this key.
-  # Leave null to use the fully auto-derived name.
+  #  2. CLI --features <base>             base name, model auto-appended
+  #     → results/features/<base>__<model>/
+  #
+  #  3. features_subfolder_override (below): base name, model auto-appended
+  #     → results/features/<override>__<model>/
+  #
+  #  4. features_dir_override (below):    exact subfolder, model NOT appended
+  #     → results/features/<override>/
+  #
+  #  5. Auto-derived (no override):
+  #     → results/features/patch{size}_step{step}_level{lvl}__<model>/
+  #
+  # Leave both null to use fully auto-derived naming.
+
+  # BASE name override; model key is always auto-appended.
+  # Example: "patch512_step512_level0"  → features/patch512_step512_level0__rn50/
   features_subfolder_override: null
+
+  # EXACT subfolder name; model is NOT appended. Use when you want to point
+  # directly to a pre-existing feature directory (e.g. from another run).
+  # Example: "patch512_step512_level0__uni"
+  features_dir_override: null
+
 
 task:
   # Name of the classification task

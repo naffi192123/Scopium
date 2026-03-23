@@ -104,6 +104,9 @@ By default every pipeline stage saves its outputs to a subfolder whose name enco
 | `segment` — patches | `results/patches/patch{size}_step{step}_level{lvl}/` | `patch_size`, `step_size`, `patch_level` |
 | `segment` — masks | `results/masks/patch{size}_step{step}_level{lvl}/` | same as patches |
 | `extract` — features | `results/features/patch{size}_step{step}_level{lvl}__{model}/` | patch config + `feature_extraction.model` |
+| `classify` — filtered | `results/features/{feature_subfolder}__{CATEGORY}/` | tissue classes kept |
+| `classify` — CSVs | `results/patch_predictions/{feature_subfolder}/` | slide predictions |
+| `classify-heatmap` | `results/patch_predictions/{feature_subfolder}/heatmaps/` | prediction heatmaps |
 
 **Example** with the default config (`patch_size=512`, `step_size=512`, `patch_level=0`, `model=rn50`):
 
@@ -133,28 +136,52 @@ python main.py segment --config config/config.yaml --patches patch256_step256_le
 python main.py extract --config config/config.yaml --patches patch256_step256_level0_otsu
 ```
 
-### Feature subfolder (affects `extract`, `train`, `evaluate`, `heatmap`)
+### Feature subfolder (affects `extract`, `train`, `evaluate`, `heatmap`, `classify`, `classify-heatmap`)
 
-> **Important:** The model name (`__{model}`) is **always** auto-appended to both the auto-derived name and any override value. You only need to supply the base name.
+Five resolution tiers, applied in priority order:
+
+| Priority | Mechanism | Model auto-appended? | Example resolves to |
+|---|---|---|---|
+| 1 (highest) | `--feature_dir` CLI | **No** | `features/patch512_step512_level0__uni/` |
+| 2 | `--features` CLI | **Yes** | `features/patch512_step512_level0__rn50/` |
+| 3 | `feature_extraction.features_subfolder_override` | **Yes** | same pattern |
+| 4 | `feature_extraction.features_dir_override` | **No** | exact name as given |
+| 5 (lowest) | Auto-derived | **Yes** | `features/patch{sz}_step{sz}_level{lvl}__{model}/` |
+
+**When to use which:**
+- Use **`--feature_dir`** (or `features_dir_override`) when pointing to a specific existing directory whose name already includes the model suffix.
+- Use **`--features`** (or `features_subfolder_override`) when you only want to override the base name; the current model key is still auto-appended.
 
 **YAML:**
 ```yaml
 feature_extraction:
+  # BASE name — model always appended:
   features_subfolder_override: "patch512_step512_level0"
-  # resolves to: features/patch512_step512_level0__rn50/
+  # → resolves to: features/patch512_step512_level0__rn50/
+
+  # EXACT name — model NOT appended:
+  features_dir_override: "patch512_step512_level0__uni"
+  # → resolves to: features/patch512_step512_level0__uni/
 ```
 
-**CLI flag:**
+**CLI:**
 ```bash
+# Base name (model auto-appended)
 python main.py train --config config/config.yaml --features patch512_step512_level0
 # reads from: results/features/patch512_step512_level0__rn50/pt_files/
+
+# Exact name (model NOT appended — highest priority)
+python main.py train --config config/config.yaml --feature_dir patch512_step512_level0__uni
+# reads from: results/features/patch512_step512_level0__uni/pt_files/
 ```
 
 ### Override priority (highest → lowest)
 
-1. CLI flag (`--patches` / `--features`)
-2. YAML key (`patches_subfolder_override` / `features_subfolder_override`)
-3. Auto-derived name from config parameters
+1. CLI flag `--feature_dir` (exact, no model appended)
+2. CLI flag `--features` (base name, model auto-appended)
+3. YAML `features_subfolder_override` (base, model auto-appended)
+4. YAML `features_dir_override` (exact, no model appended)
+5. Auto-derived from config parameters
 
 ---
 
@@ -419,6 +446,61 @@ python main.py heatmap --config config/config.yaml \
 - `<slide_id>_heatmap.png` — jet colormap overlay on WSI thumbnail
 - `<slide_id>_attention_scores.csv` — coord_x, coord_y, attention per patch
 - `top20_tiles/` — top 20 highest-attention tiles extracted from the raw WSI
+
+---
+
+### 11. Patch-Level Classification (`classify`)
+
+Runs batched inference on `.h5` or `.pt` features using a pretrained patch classifier.
+Saves CSV predictions and creates filtered feature directories per category.
+
+```bash
+python main.py classify --config config/config.yaml
+
+# Read features from a specific subfolder:
+python main.py classify --config config/config.yaml --features my_features
+```
+
+Config (`patch_classifier` block):
+```yaml
+patch_classifier:
+  checkpoint_path: "outputs/classifier/best.pth"
+  batch_size: 512
+  input_format: h5        # h5 or pt
+  filter_categories:      # categories to save as newly filtered .h5/.pt files
+    - TUM
+    - STR
+```
+
+**Outputs:**
+- `results/patch_predictions/{features_subfolder}/<slide>.csv`
+- `results/features/{features_subfolder}__{CATEGORY}/` (filtered subset files)
+
+---
+
+### 12. Prediction Heatmaps (`classify-heatmap`)
+
+Overlays categorical patch predictions or confidence scores onto the WSI thumbnail.
+
+```bash
+python main.py classify-heatmap --config config/config.yaml
+# Only for a single WSI:
+python main.py classify-heatmap --config config/config.yaml --slide CMU-1
+```
+
+Config (`patch_classifier.heatmap` block):
+```yaml
+patch_classifier:
+  heatmap:
+    slides: all               # or single slide ID, or list of IDs
+    categories: [TUM, STR]    # only visualise these categories
+    mode: category_map        # 'category_map' (all classes at once) or 'confidence' (jet map)
+    top_k_tiles: 10           # exports top 10 highest confidence patches (confidence mode only)
+```
+
+**Outputs:**
+- `results/patch_predictions/{subfolder}/heatmaps/<slide>/<slide>_category_map.png`
+- `results/patch_predictions/{subfolder}/heatmaps/<slide>/<slide>_confidence_<cat>.png`
 
 ---
 
