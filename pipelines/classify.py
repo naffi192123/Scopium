@@ -31,6 +31,10 @@ patch_classifier:
   filter_categories:      # tissue classes to keep in filtered outputs
     - TUM
     - STR
+
+See also
+--------
+pipelines/classify_heatmap.py  — tile-level prediction heatmap visualisation
 """
 
 import os
@@ -50,7 +54,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# HDF5 write helper (reuses the same pattern as extract.py)
+# HDF5 write helper
 # ---------------------------------------------------------------------------
 
 def _write_h5(path: str, features: np.ndarray, coords: np.ndarray):
@@ -66,8 +70,8 @@ def _write_h5(path: str, features: np.ndarray, coords: np.ndarray):
 def _load_h5(h5_path: str):
     """Returns (features np.float32 (N,D), coords np.int64 (N,2))."""
     with h5py.File(h5_path, "r") as f:
-        features = f["features"][:]        # (N, D)
-        coords   = f["coords"][:]          # (N, 2)
+        features = f["features"][:]
+        coords   = f["coords"][:]
     return features.astype(np.float32), coords.astype(np.int64)
 
 
@@ -76,7 +80,6 @@ def _load_pt(pt_path: str):
     t = torch.load(pt_path, map_location="cpu")
     features = t.numpy().astype(np.float32) if isinstance(t, torch.Tensor) else t
     n = len(features)
-    # No coordinate information available in .pt-only mode — use patch indices
     coords = np.stack([np.arange(n), np.zeros(n, dtype=np.int64)], axis=1)
     return features, coords
 
@@ -98,10 +101,10 @@ def command_classify(config: dict, dirs_dict: dict, log=None):
     _log = log or logger
 
     # ── Config ───────────────────────────────────────────────────────────────
-    clf_cfg    = config.get("patch_classifier", {})
-    ckpt_path  = clf_cfg.get("checkpoint_path")
-    batch_size = int(clf_cfg.get("batch_size", 512))
-    fmt        = clf_cfg.get("input_format", "h5").lower().strip()
+    clf_cfg     = config.get("patch_classifier", {})
+    ckpt_path   = clf_cfg.get("checkpoint_path")
+    batch_size  = int(clf_cfg.get("batch_size", 512))
+    fmt         = clf_cfg.get("input_format", "h5").lower().strip()
     filter_cats = clf_cfg.get("filter_categories", [])
 
     if not ckpt_path or not os.path.exists(ckpt_path):
@@ -111,7 +114,7 @@ def command_classify(config: dict, dirs_dict: dict, log=None):
         return
 
     if filter_cats == "all" or filter_cats is None:
-        filter_cats = []   # handled later — None means save all categories
+        filter_cats = []
 
     # ── Device & Model ───────────────────────────────────────────────────────
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -127,20 +130,18 @@ def command_classify(config: dict, dirs_dict: dict, log=None):
     _log.info(f"Filter categories: {filter_cats if filter_cats else 'all'}")
 
     # ── Directories ───────────────────────────────────────────────────────────
-    features_dir = dirs_dict["features"]
-    results_root = config["paths"]["results_dir"]
+    features_dir   = dirs_dict["features"]
+    results_root   = config["paths"]["results_dir"]
     feat_subfolder = dirs_dict.get("_feature_subfolder",
                                    os.path.basename(features_dir))
 
-    # Predictions output directory
     pred_dir = os.path.join(results_root, "patch_predictions", feat_subfolder)
     os.makedirs(pred_dir, exist_ok=True)
 
-    # Pre-create filtered feature directories for each requested category
-    active_cats = filter_cats if filter_cats else class_names
+    active_cats   = filter_cats if filter_cats else class_names
     filtered_dirs = {}
     for cat in active_cats:
-        cat_upper = cat.upper()
+        cat_upper    = cat.upper()
         cat_feat_dir = os.path.join(results_root, "features",
                                     f"{feat_subfolder}__{cat_upper}")
         filtered_dirs[cat_upper] = {
@@ -151,8 +152,6 @@ def command_classify(config: dict, dirs_dict: dict, log=None):
         os.makedirs(filtered_dirs[cat_upper]["pt"], exist_ok=True)
 
     # ── Find feature files — auto-detect available format ─────────────────────
-    # Preferred: h5 (carries real patch coordinates).
-    # Fallback:  pt (coordinates will be sequential patch indices).
     h5_subdir = os.path.join(features_dir, "h5_files")
     pt_subdir  = os.path.join(features_dir, "pt_files")
 
@@ -161,14 +160,10 @@ def command_classify(config: dict, dirs_dict: dict, log=None):
     elif fmt == "pt" and os.path.isdir(pt_subdir):
         feat_subdir, file_ext, loader_fn = pt_subdir, ".pt", _load_pt
     elif os.path.isdir(h5_subdir):
-        # Auto-fallback to h5 when requested format isn't available
-        _log.info(
-            f"input_format='{fmt}' not available; auto-detected h5_files.")
+        _log.info(f"input_format='{fmt}' not available; auto-detected h5_files.")
         feat_subdir, file_ext, loader_fn = h5_subdir, ".h5", _load_h5
     elif os.path.isdir(pt_subdir):
-        # Auto-fallback to pt
-        _log.info(
-            f"input_format='{fmt}' not available; auto-detected pt_files.")
+        _log.info(f"input_format='{fmt}' not available; auto-detected pt_files.")
         feat_subdir, file_ext, loader_fn = pt_subdir, ".pt", _load_pt
     else:
         _log.error(
@@ -189,7 +184,6 @@ def command_classify(config: dict, dirs_dict: dict, log=None):
     success = failed = 0
     wall_start = time.time()
 
-    # ── Per-slide loop ────────────────────────────────────────────────────────
     for feat_file in feat_files:
         slide_name = os.path.splitext(feat_file)[0]
         feat_path  = os.path.join(feat_subdir, feat_file)
@@ -200,7 +194,6 @@ def command_classify(config: dict, dirs_dict: dict, log=None):
             success += 1
             continue
 
-        # Load features & coords
         try:
             features_np, coords_np = loader_fn(feat_path)
         except Exception as exc:
@@ -215,19 +208,16 @@ def command_classify(config: dict, dirs_dict: dict, log=None):
         N, D = features_np.shape
         _log.info(f"[{slide_name}] {N} patches | feat_dim={D}")
 
-        # Batched inference
         feat_tensor = torch.from_numpy(features_np)
-        dataset_    = TensorDataset(feat_tensor)
-        loader_     = DataLoader(dataset_, batch_size=batch_size,
+        loader_     = DataLoader(TensorDataset(feat_tensor), batch_size=batch_size,
                                  shuffle=False, num_workers=0)
-
         all_probs   = []
         slide_start = time.time()
 
         try:
             with torch.no_grad():
                 for (batch,) in loader_:
-                    batch = batch.to(device)
+                    batch  = batch.to(device)
                     logits = model(batch)
                     probs  = F.softmax(logits, dim=1).cpu().numpy()
                     all_probs.append(probs)
@@ -236,58 +226,47 @@ def command_classify(config: dict, dirs_dict: dict, log=None):
             failed += 1
             continue
 
-        all_probs  = np.concatenate(all_probs, axis=0)   # (N, C)
-        pred_idx   = all_probs.argmax(axis=1)              # (N,)
-        confidence = all_probs.max(axis=1)                 # (N,)
+        all_probs  = np.concatenate(all_probs, axis=0)
+        pred_idx   = all_probs.argmax(axis=1)
+        confidence = all_probs.max(axis=1)
         pred_label = [class_names[i] for i in pred_idx]
 
-        # ── Save predictions CSV ──────────────────────────────────────────────
         row_dict = {
-            "coord_x":        coords_np[:, 0],
-            "coord_y":        coords_np[:, 1],
+            "coord_x":         coords_np[:, 0],
+            "coord_y":         coords_np[:, 1],
             "predicted_label": pred_label,
-            "confidence":     np.round(confidence, 6),
+            "confidence":      np.round(confidence, 6),
         }
         for j, cls in enumerate(class_names):
             row_dict[cls] = np.round(all_probs[:, j], 6)
 
-        df_pred = pd.DataFrame(row_dict)
-        df_pred.to_csv(pred_csv, index=False)
+        pd.DataFrame(row_dict).to_csv(pred_csv, index=False)
 
         elapsed = time.time() - slide_start
         _log.info(
-            f"[{slide_name}] Done | {N} patches | {elapsed:.1f}s | "
-            f"CSV → {pred_csv}")
+            f"[{slide_name}] Done | {N} patches | {elapsed:.1f}s | CSV → {pred_csv}")
 
         # ── Generate filtered feature files ───────────────────────────────────
         for cat in active_cats:
             cat_upper = cat.upper()
             if cat_upper not in class_names:
                 _log.warning(
-                    f"Category '{cat_upper}' not in class_names {class_names} — skipping.")
+                    f"Category '{cat_upper}' not in class_names — skipping.")
                 continue
 
             mask = np.array([lbl == cat_upper for lbl in pred_label])
             if mask.sum() == 0:
-                _log.info(f"  [{slide_name}] No patches for category {cat_upper}.")
+                _log.info(f"  [{slide_name}] No patches for {cat_upper}.")
                 continue
 
-            cat_features = features_np[mask]      # (M, D)
-            cat_coords   = coords_np[mask]         # (M, 2)
             M = int(mask.sum())
-
-            # .h5
-            h5_path = os.path.join(
-                filtered_dirs[cat_upper]["h5"], slide_name + ".h5")
-            _write_h5(h5_path, cat_features, cat_coords)
-
-            # .pt
-            pt_path = os.path.join(
-                filtered_dirs[cat_upper]["pt"], slide_name + ".pt")
-            torch.save(torch.from_numpy(cat_features), pt_path)
-
-            _log.info(
-                f"  [{slide_name}] {cat_upper}: {M}/{N} patches saved.")
+            _write_h5(
+                os.path.join(filtered_dirs[cat_upper]["h5"], slide_name + ".h5"),
+                features_np[mask], coords_np[mask])
+            torch.save(
+                torch.from_numpy(features_np[mask]),
+                os.path.join(filtered_dirs[cat_upper]["pt"], slide_name + ".pt"))
+            _log.info(f"  [{slide_name}] {cat_upper}: {M}/{N} patches saved.")
 
         success += 1
 

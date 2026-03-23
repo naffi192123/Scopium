@@ -192,10 +192,42 @@ patch_classifier:
     - TUM
     - STR
 
-  # Output: per-slide CSVs with cols:
-  #   coord_x, coord_y, predicted_label, confidence, ADI, DEB, LYM, MUC, MUS, NOR, STR, TUM
-  # Saved to: results/patch_predictions/{feature_subfolder}/{slide_id}.csv
+  # ── Heatmap Visualization ──────────────────────────────────────────────────
+  # Used by: python main.py classify-heatmap --config config/config.yaml
+  heatmap:
 
-  # Filtered feature files for each requested category saved to:
-  # results/features/{feature_subfolder}__{CATEGORY}/h5_files/
-  # results/features/{feature_subfolder}__{CATEGORY}/pt_files/
+    # Which slides to visualize.
+    # Options:
+    #   all                       → all slides that have a prediction CSV
+    #   "CMU-1"                   → single slide (also overridden by --slide CLI flag)
+    #   [CMU-1, CMU-2, TCGA-AA]  → explicit subset
+    slides: all
+
+    # Which tissue categories to visualize.
+    # Options:
+    #   all                   → all 8 classes
+    #   "TUM"                 → single class
+    #   [TUM, STR, LYM]       → subset
+    categories:
+      - TUM
+      - STR
+      - LYM
+      - NOR
+
+    # Visualization mode:
+    #   category_map  → one image per slide, each tile coloured by predicted class
+    #                   (saves {slide_id}_category_map.png + class legend below)
+    #   confidence    → one image per slide per category, jet colourmap = confidence
+    #                   (saves {slide_id}_confidence_{CAT}.png + jet colorbar)
+    mode: category_map
+
+    # Overlay opacity [0.0 = transparent, 1.0 = opaque]
+    alpha: 0.50
+
+    # Number of highest-confidence tiles to save as individual crops per category.
+    # Set to 0 to skip tile saving (only relevant in confidence mode).
+    top_k_tiles: 10
+
+  # ── Category colour palette (for reference) ──────────────────────────────────
+  # ADI → tan       DEB → grey    LYM → purple  MUC → teal
+  # MUS → orange    NOR → green   STR → blue     TUM → red
