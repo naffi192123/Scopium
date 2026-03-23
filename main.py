@@ -11,12 +11,13 @@ from pipelines.split import command_split
 from pipelines.train import command_train
 from pipelines.evaluate import command_evaluate
 from pipelines.visualize import command_heatmap
+from pipelines.classify import command_classify
 from utils.logger import setup_logger
 import pandas as pd
 
 def parse_args():
     parser = argparse.ArgumentParser(description="WSI Classification Framework")
-    parser.add_argument("command", choices=["process", "stats", "segment", "debug-segmentation", "extract-tile", "extract", "analyse", "split", "train", "evaluate", "heatmap"],
+    parser.add_argument("command", choices=["process", "stats", "segment", "debug-segmentation", "extract-tile", "extract", "analyse", "split", "train", "evaluate", "heatmap", "classify"],
                         help="Command to execute")
     parser.add_argument("--config", type=str, default="config/config.yaml", help="Path to the config file")
     parser.add_argument("--csv", type=str, default=None, help="[analyse/split] Path to annotation CSV")
@@ -163,6 +164,8 @@ def main():
         command_evaluate(config, dirs_dict, logger, experiment_dir=args.experiment)
     elif args.command == "heatmap":
         command_heatmap(config, dirs_dict, logger, experiment_dir=args.experiment)
+    elif args.command == "classify":
+        command_classify(config, dirs_dict, logger)
 
 if __name__ == "__main__":
     main()

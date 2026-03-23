@@ -169,3 +169,33 @@ training:
 experiment:
   # Sub-folder inside results/ for specific sweeping experiments
   name: default_experiment
+
+# ─── Patch-Level Classifier ───────────────────────────────────────────────────
+# Used by: python main.py classify --config config/config.yaml
+patch_classifier:
+
+  # Path to the pretrained classifier checkpoint (.pth).
+  # Expected format: {model_cfg, num_classes, model_state, [class_names], [in_features]}
+  checkpoint_path: "outputs/checkpoints/BEST_MODEL.pth"
+
+  # Per-GPU batch size for inference (larger = faster; A100 can handle 2048+)
+  batch_size: 512
+
+  # Which feature files to read: 'h5' (reads h5_files/*.h5, has coords) or
+  # 'pt' (reads pt_files/*.pt, coords will be sequential indices)
+  input_format: h5
+
+  # Tissue categories to keep when generating filtered feature files.
+  # Leave empty ([]) or set to 'all' to generate filtered files for every class.
+  # Supported classes: ADI, DEB, LYM, MUC, MUS, NOR, STR, TUM
+  filter_categories:
+    - TUM
+    - STR
+
+  # Output: per-slide CSVs with cols:
+  #   coord_x, coord_y, predicted_label, confidence, ADI, DEB, LYM, MUC, MUS, NOR, STR, TUM
+  # Saved to: results/patch_predictions/{feature_subfolder}/{slide_id}.csv
+
+  # Filtered feature files for each requested category saved to:
+  # results/features/{feature_subfolder}__{CATEGORY}/h5_files/
+  # results/features/{feature_subfolder}__{CATEGORY}/pt_files/
