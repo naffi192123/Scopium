@@ -51,6 +51,7 @@ torch==2.5.1+cu121
 torchaudio==2.5.1+cu121
 torchstain==1.4.1
 torchvision==0.20.1+cu121
+optuna>=3.5
 tqdm==4.67.3
 typer==0.23.2
 typing_extensions==4.15.0

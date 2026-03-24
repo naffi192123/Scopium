@@ -7,7 +7,7 @@
 
 paths:
   # Directory containing raw WSI files
-  slides_dir: "dataset/slides"
+  slides_dir: "/lustre/naffi/point_mutation/single_slides_datas"
   
   # Directory containing manual annotations (optional)
   annotations_dir: "dataset/annotations"
@@ -58,8 +58,8 @@ tiling:
   patches_subfolder_override: null
 
 feature_extraction:
-  # Deep learning feature encoder (e.g., 'rn50', 'uni', 'virchow')
-  model: rn50
+  # Deep learning feature encoder (e.g., 'rn50', 'uni', 'virchow', 'optimus')
+  model: optimus
 
   # ── Batching ─────────────────────────────────────────────────────────────────
   # Per-GPU batch size. A100 (80 GB) can handle 256+ for most ViT models.
@@ -129,7 +129,7 @@ task:
   # Number of output classes (2 for binary)
   num_classes: 2
   # Class names in label-index order
-  class_names: [benign, malignant]
+  class_names: [Non_heterogenous, Heterogenous]
 
 # --- Dataset Splitting ----------------------------------------------------------
 split:
@@ -147,7 +147,7 @@ mil:
 
   # Must match the feature extractor output dim
   # rn50=2048, rn18=512, uni/vit_l=1024, optimus/gigapath=1536, hibou_b/phikon=768
-  encoding_size: 2048
+  encoding_size: 1536
 
   # Attention network hidden dimension
   hidden_dim: 256
@@ -184,9 +184,63 @@ training:
   # DataLoader
   num_workers: 0
 
+  # ── Overfitting mitigation ──────────────────────────────────────────────────
+  # Optimizer: Adam | AdamW
+  optimizer: AdamW
+
+  # LR scheduler: plateau | cosine | step
+  lr_scheduler: plateau
+
+  # Cross-entropy label smoothing [0.0 = disabled]
+  label_smoothing: 0.0
+
+  # LR warmup (linear ramp for first N epochs)
+  warmup_epochs: 0
+
+  # Patch-level dropout: randomly drop this fraction of patches each step
+  patch_dropout: 0.0
+
+  # Randomly shuffle patch order each step (breaks sequence bias)
+  patch_shuffle: false
+
+  # Cap bag size to N patches (null = use all patches)
+  max_patches: null
+
 experiment:
   # Sub-folder inside results/ for specific sweeping experiments
   name: default_experiment
+
+# ─── HPO — Hyperparameter Optimisation ────────────────────────────────────────
+# Used by: python main.py hpo --config config/config.yaml
+hpo:
+  study_name: mil_hpo       # name for the Optuna study
+  n_trials: 30              # number of HP trials to run
+  metric: val_auc           # val_auc | val_acc | val_f1
+  direction: maximize       # maximize | minimize
+  timeout_hours: null       # stop after N hours (null = run all n_trials)
+  epochs_per_trial: 30      # max training epochs per trial
+  pruning: true             # use Optuna MedianPruner for early trial elimination
+
+  # ── Search space ─────────────────────────────────────────────────────────────
+  # Set a key to null to keep the value from config.yaml fixed (not tuned).
+  # For range parameters: [low, high].  For categorical: [choice1, choice2, ...]
+  search_space:
+    # model:               [abmil, clam_sb, clam_mb, mean_pool, transmil, dsmil]
+    model:               [abmil]
+    optimizer:           [AdamW, Adam]
+    learning_rate:       [1.0e-4, 2.0e-3]   # log-uniform
+    weight_decay:        [1.0e-5, 5.0e-4]   # log-uniform
+    dropout:             [0.1, 0.6]          # uniform
+    dropout_attn:        [0.2, 0.4]          # uniform
+    dropout_classifier:  [0.1, 0.3]          # uniform
+    attn_hidden_dim:     [32, 64, 128]       # categorical
+    feature_proj_dim:    [256, 512]          # categorical
+    lr_scheduler:        [cosine, step, plateau]  # categorical
+    label_smoothing:     [0.0, 0.15]         # uniform
+    early_stop_patience: [10, 15]            # categorical
+    warmup_epochs:       [0, 2, 5]           # categorical
+    patch_dropout:       [0.0, 0.3]          # uniform
+    max_patches:         [null, 1000, 2000]  # categorical bag-size cap
 
 # ─── Patch-Level Classifier ───────────────────────────────────────────────────
 # Used by: python main.py classify --config config/config.yaml
@@ -194,7 +248,7 @@ patch_classifier:
 
   # Path to the pretrained classifier checkpoint (.pth).
   # Expected format: {model_cfg, num_classes, model_state, [class_names], [in_features]}
-  checkpoint_path: "outputs/checkpoints/BEST_MODEL.pth"
+  checkpoint_path: "/home/naffi/projects/Scopium/Scopium/results/attention_mlp_best_hpo_train_val_test/best_model.pth"
 
   # Per-GPU batch size for inference (larger = faster; A100 can handle 2048+)
   batch_size: 512

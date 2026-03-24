@@ -119,7 +119,8 @@ def mil_collate_fn(batch):
     return features, labels, slide_ids
 
 
-def build_mil_datasets(config: dict, dirs_dict: dict, pt_dir: str = None):
+def build_mil_datasets(config: dict, dirs_dict: dict,
+                       pt_dir: str = None, max_patches=None):
     """
     Build train / val (optional) / test MILBagDataset instances.
 
@@ -180,6 +181,11 @@ def build_mil_datasets(config: dict, dirs_dict: dict, pt_dir: str = None):
 
     logger.info(f"MIL feature source (pt_files): {pt_dir}")
 
+    # ── Resolve max_patches ───────────────────────────────────────────────────
+    # Explicit arg (from HPO trial) takes priority over config value.
+    if max_patches is None:
+        max_patches = config.get('training', {}).get('max_patches')
+
     splits_dir = os.path.join(paths_cfg['results_dir'], 'splits', task_name)
 
     datasets = {}
@@ -191,6 +197,7 @@ def build_mil_datasets(config: dict, dirs_dict: dict, pt_dir: str = None):
             csv_path    = csv_path,
             pt_dir      = pt_dir,
             class_names = class_names,
+            max_patches = max_patches,
         )
 
     return datasets, class_names

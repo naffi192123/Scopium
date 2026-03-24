@@ -13,13 +13,17 @@ from pipelines.evaluate import command_evaluate
 from pipelines.visualize import command_heatmap
 from pipelines.classify import command_classify
 from pipelines.classify_heatmap import command_classify_heatmap
+from pipelines.hpo import command_hpo, load_best_config
 from utils.logger import setup_logger
 import pandas as pd
 
 def parse_args():
     parser = argparse.ArgumentParser(description="WSI Classification Framework")
-    parser.add_argument("command", choices=["process", "stats", "segment", "debug-segmentation", "extract-tile", "extract", "analyse", "split", "train", "evaluate", "heatmap", "classify", "classify-heatmap"],
-                        help="Command to execute")
+    parser.add_argument("command", choices=[
+        "process", "stats", "segment", "debug-segmentation", "extract-tile",
+        "extract", "analyse", "split", "train", "evaluate", "heatmap",
+        "classify", "classify-heatmap", "hpo"],
+        help="Command to execute")
     parser.add_argument("--config", type=str, default="config/config.yaml", help="Path to the config file")
     parser.add_argument("--csv", type=str, default=None, help="[analyse/split] Path to annotation CSV")
     parser.add_argument("--experiment", type=str, default=None,
@@ -46,6 +50,10 @@ def parse_args():
         metavar="SLIDE_ID",
         help="[classify-heatmap] Process only this single slide ID "
              "(without file extension). Overrides patch_classifier.heatmap.slides in config.")
+    parser.add_argument(
+        "--use_best_config", action="store_true",
+        help="[train] Load best_config.yaml from the HPO results directory and "
+             "merge it into config before training. Run `hpo` first to generate it.")
     return parser.parse_args()
 
 def get_slide_paths(config):
@@ -175,6 +183,9 @@ def main():
     elif args.command == "split":
         command_split(config, dirs_dict, logger, csv_path=args.csv)
     elif args.command == "train":
+        # Optionally merge best HPO config before training
+        if getattr(args, 'use_best_config', False):
+            config = load_best_config(config, log=logger)
         command_train(config, dirs_dict, logger)
     elif args.command == "evaluate":
         command_evaluate(config, dirs_dict, logger, experiment_dir=args.experiment)
@@ -185,6 +196,8 @@ def main():
     elif args.command == "classify-heatmap":
         command_classify_heatmap(config, dirs_dict, logger,
                                  slide_override=args.slide)
+    elif args.command == "hpo":
+        command_hpo(config, dirs_dict, logger)
 
 if __name__ == "__main__":
     main()

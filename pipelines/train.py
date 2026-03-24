@@ -82,8 +82,10 @@ def _compute_metrics(all_probs, all_preds, all_labels, n_classes):
 
 
 def _build_loss_fn(config, class_names, device):
-    """Build CrossEntropyLoss, optionally class-weighted."""
-    if config.get('training', {}).get('weighted_loss', False):
+    """Build CrossEntropyLoss, optionally class-weighted and with label smoothing."""
+    train_cfg       = config.get('training', {})
+    label_smoothing = float(train_cfg.get('label_smoothing', 0.0))
+    if train_cfg.get('weighted_loss', False):
         task_name = config['task']['name']
         results   = config['paths']['results_dir']
         train_csv = os.path.join(results, 'splits', task_name, 'train.csv')
@@ -92,12 +94,13 @@ def _build_loss_fn(config, class_names, device):
         tot = len(lbl)
         w   = [tot / (len(class_names) * (lbl == c).sum()) for c in class_names]
         weight = torch.tensor(w, dtype=torch.float).to(device)
-        return nn.CrossEntropyLoss(weight=weight)
-    return nn.CrossEntropyLoss()
+        return nn.CrossEntropyLoss(weight=weight, label_smoothing=label_smoothing)
+    return nn.CrossEntropyLoss(label_smoothing=label_smoothing)
 
 
 def _run_epoch(model, loader, optimizer, loss_fn,
-               n_classes, device, is_train, use_clam, bag_weight):
+               n_classes, device, is_train, use_clam, bag_weight,
+               patch_dropout=0.0, patch_shuffle=False):
     """Run one epoch. Returns (avg_loss, metrics_dict)."""
     model.train(is_train)
     total_loss   = 0.
@@ -110,6 +113,16 @@ def _run_epoch(model, loader, optimizer, loss_fn,
             for feats, label in zip(feats_list, labels):
                 feats = feats.to(device)
                 label = label.unsqueeze(0).to(device)
+
+                # ── Bag-level regularisation (training only) ──────────────────
+                if is_train:
+                    if patch_shuffle:
+                        idx   = torch.randperm(feats.size(0), device=device)
+                        feats = feats[idx]
+                    if patch_dropout > 0 and feats.size(0) > 4:
+                        keep  = max(4, int(feats.size(0) * (1 - patch_dropout)))
+                        idx   = torch.randperm(feats.size(0), device=device)[:keep]
+                        feats = feats[idx]
 
                 if use_clam:
                     logits, Y_prob, Y_hat, _, extras = model(
@@ -313,19 +326,43 @@ def command_train(config: dict, dirs_dict: dict, log=None):
     _log.info(f"Model: {mil_name} | Params: {n_params:,} | Classes: {n_classes}")
 
     # ── Optimiser & scheduler ──────────────────────────────────────────────────
-    lr        = float(train_cfg.get('learning_rate',   2e-4))
-    wd        = float(train_cfg.get('weight_decay',    1e-4))
-    b1        = float(train_cfg.get('beta1',           0.9))
-    b2        = float(train_cfg.get('beta2',           0.999))
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr,
-                                 weight_decay=wd, betas=(b1, b2))
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, 'min',
-        factor   = float(train_cfg.get('lr_scheduler_factor', 0.5)),
-        patience = int(train_cfg.get('lr_scheduler_patience', 10)),
-    )
+    lr           = float(train_cfg.get('learning_rate',   2e-4))
+    wd           = float(train_cfg.get('weight_decay',    1e-4))
+    b1           = float(train_cfg.get('beta1',           0.9))
+    b2           = float(train_cfg.get('beta2',           0.999))
+    opt_name     = train_cfg.get('optimizer', 'AdamW')
+    warmup_ep    = int(train_cfg.get('warmup_epochs', 0))
+    sched_name   = train_cfg.get('lr_scheduler', 'plateau')
+    patch_dropout = float(train_cfg.get('patch_dropout', 0.0))
+    patch_shuffle = bool(train_cfg.get('patch_shuffle', False))
+
+    if opt_name == 'Adam':
+        optimizer = torch.optim.Adam(
+            model.parameters(), lr=lr, weight_decay=wd, betas=(b1, b2))
+    else:  # AdamW (default)
+        optimizer = torch.optim.AdamW(
+            model.parameters(), lr=lr, weight_decay=wd, betas=(b1, b2))
+
+    if sched_name == 'cosine':
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=max_ep, eta_min=1e-7)
+    elif sched_name == 'step':
+        scheduler = torch.optim.lr_scheduler.StepLR(
+            optimizer, step_size=max(1, max_ep // 3), gamma=0.3)
+    else:  # plateau (default)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, 'min',
+            factor   = float(train_cfg.get('lr_scheduler_factor', 0.5)),
+            patience = int(train_cfg.get('lr_scheduler_patience', 10)))
 
     loss_fn = _build_loss_fn(config, class_names, device)
+
+    if warmup_ep > 0:
+        _log.info(f"  LR warmup: {warmup_ep} epochs")
+    if patch_dropout > 0:
+        _log.info(f"  Patch dropout: {patch_dropout:.2f}")
+    if patch_shuffle:
+        _log.info("  Patch shuffle: enabled")
 
     # ── Early stopping ─────────────────────────────────────────────────────────
     do_es  = bool(train_cfg.get('early_stopping', True))
@@ -356,9 +393,17 @@ def command_train(config: dict, dirs_dict: dict, log=None):
     for epoch in range(1, max_ep + 1):
         t0 = time.time()
 
+        # LR warmup
+        if warmup_ep > 0 and epoch <= warmup_ep:
+            scale = epoch / max(1, warmup_ep)
+            for pg in optimizer.param_groups:
+                pg['lr'] = lr * scale
+
         tr_loss, tr_met = _run_epoch(model, train_loader, optimizer, loss_fn,
                                      n_classes, device, is_train=True,
-                                     use_clam=use_clam, bag_weight=bag_weight)
+                                     use_clam=use_clam, bag_weight=bag_weight,
+                                     patch_dropout=patch_dropout,
+                                     patch_shuffle=patch_shuffle)
         elapsed = time.time() - t0
         current_lr = optimizer.param_groups[0]['lr']
 
@@ -381,7 +426,11 @@ def command_train(config: dict, dirs_dict: dict, log=None):
             vl_loss, vl_met = _run_epoch(model, val_loader, optimizer, loss_fn,
                                          n_classes, device, is_train=False,
                                          use_clam=use_clam, bag_weight=bag_weight)
-            scheduler.step(vl_loss)
+            # Step scheduler
+            if sched_name == 'plateau':
+                scheduler.step(vl_loss)
+            else:
+                scheduler.step()
             monitor_loss = vl_loss
 
             _append_history_row(exp_dir, {
@@ -402,7 +451,10 @@ def command_train(config: dict, dirs_dict: dict, log=None):
                 f"val_loss={vl_loss:.4f} acc={vl_met['acc']:.3f} auc={vl_met['auc']:.3f} | "
                 f"lr={current_lr:.2e} | {elapsed:.1f}s")
         else:
-            scheduler.step(tr_loss)
+            if sched_name == 'plateau':
+                scheduler.step(tr_loss)
+            else:
+                scheduler.step()
             monitor_loss = tr_loss
             vl_met = tr_met
             vl_loss = tr_loss
