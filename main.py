@@ -32,17 +32,15 @@ def parse_args():
              "Example: --patches patch256_step256_level0")
     parser.add_argument(
         "--features", type=str, default=None,
-        metavar="BASE",
-        help="[extract/train/evaluate/heatmap/classify] Override feature subfolder BASE name "
-             "(model is auto-appended). Takes priority over feature_extraction.features_subfolder_override. "
-             "Example: --features patch512_step512_level0  → reads features/patch512_step512_level0__rn50/")
+        metavar="SUBFOLDER",
+        help="[extract/train/evaluate/heatmap/classify] Exact feature subfolder name inside "
+             "results/features/. This value is used verbatim — the model key is NOT auto-appended. "
+             "Overrides feature_extraction.features_subfolder_override / features_dir_override in config.yaml. "
+             "Example: --features patch512_step512_level0__uni")
     parser.add_argument(
         "--feature_dir", type=str, default=None,
         metavar="SUBFOLDER",
-        help="[train/evaluate/heatmap/classify] Exact feature subfolder name (model NOT auto-appended). "
-             "Use to point directly to an existing directory. "
-             "Takes highest priority over --features and config. "
-             "Example: --feature_dir patch512_step512_level0__uni")
+        help="Alias for --features (both are treated identically as exact subfolder name).")
     parser.add_argument(
         "--slide", type=str, default=None,
         metavar="SLIDE_ID",
@@ -139,15 +137,14 @@ def main():
     args = parse_args()
     config = load_config(args.config)
 
-    # --feature_dir takes highest priority: it is the EXACT subfolder name (model not appended).
-    # --features is the base name (model auto-appended by setup_directories).
+    # Both --features and --feature_dir are treated as exact subfolder names
+    # (model is NOT auto-appended). --feature_dir takes priority if both given.
     features_override = args.feature_dir or args.features
 
     dirs_dict = setup_directories(
         config,
         patches_override=args.patches,
         features_override=features_override,
-        exact_features=bool(args.feature_dir),
     )
 
     # Initialize global logger

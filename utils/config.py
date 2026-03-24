@@ -43,8 +43,7 @@ def validate_config(config):
             print(f"  - {field}", file=sys.stderr)
         sys.exit(1)
 
-def setup_directories(config, patches_override=None,
-                      features_override=None, exact_features=False):
+def setup_directories(config, patches_override=None, features_override=None):
     """
     Creates the necessary directories for results as dictated by the config.
     Returns a dictionary of the created paths for easy access across modules.
@@ -120,25 +119,23 @@ def setup_directories(config, patches_override=None,
     # ── Resolve features subfolder ─────────────────────────────────────────────
     feat_cfg = config.get('feature_extraction', {})
 
-    if features_override and exact_features:
-        # --feature_dir: exact name, no model appended
+    if features_override:
+        # CLI --features / --feature_dir: treat as EXACT subfolder name.
+        # Model is NOT auto-appended — what the user types is what they get.
+        # e.g. --features patch512_step512_level0__uni
+        #   → results/features/patch512_step512_level0__uni/
         feature_str = os.path.basename(features_override.rstrip("\\/"))
-
-    elif features_override and not exact_features:
-        # --features: base name, model auto-appended
-        feature_base = os.path.basename(features_override.rstrip("\\/"))
-        feature_str  = f"{feature_base}__{f_model}"
-
-    elif feat_cfg.get('features_subfolder_override'):
-        # YAML base override (model always appended)
-        feature_str = f"{feat_cfg['features_subfolder_override']}__{f_model}"
 
     elif feat_cfg.get('features_dir_override'):
         # YAML exact override (model NOT appended — user provides full name)
         feature_str = feat_cfg['features_dir_override']
 
+    elif feat_cfg.get('features_subfolder_override'):
+        # YAML base override: model is auto-appended
+        feature_str = f"{feat_cfg['features_subfolder_override']}__{f_model}"
+
     else:
-        # Auto-derive
+        # Auto-derive from tiling + model config
         feature_str = f"{auto_patch_str}__{f_model}"
 
     # ── Build and create all result subdirectories ─────────────────────────────

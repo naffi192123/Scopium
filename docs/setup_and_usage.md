@@ -138,50 +138,46 @@ python main.py extract --config config/config.yaml --patches patch256_step256_le
 
 ### Feature subfolder (affects `extract`, `train`, `evaluate`, `heatmap`, `classify`, `classify-heatmap`)
 
-Five resolution tiers, applied in priority order:
+Four resolution tiers, applied in priority order:
 
 | Priority | Mechanism | Model auto-appended? | Example resolves to |
 |---|---|---|---|
-| 1 (highest) | `--feature_dir` CLI | **No** | `features/patch512_step512_level0__uni/` |
-| 2 | `--features` CLI | **Yes** | `features/patch512_step512_level0__rn50/` |
-| 3 | `feature_extraction.features_subfolder_override` | **Yes** | same pattern |
-| 4 | `feature_extraction.features_dir_override` | **No** | exact name as given |
-| 5 (lowest) | Auto-derived | **Yes** | `features/patch{sz}_step{sz}_level{lvl}__{model}/` |
+| 1 (highest) | `--features` or `--feature_dir` CLI | **No — exact name used verbatim** | `features/patch512_step512_level0__uni/` |
+| 2 | `feature_extraction.features_dir_override` (YAML) | **No** | exact name as given |
+| 3 | `feature_extraction.features_subfolder_override` (YAML) | **Yes** | `features/<override>__<model>/` |
+| 4 (lowest) | Auto-derived | **Yes** | `features/patch{sz}_step{sz}_level{lvl}__<model>/` |
 
-**When to use which:**
-- Use **`--feature_dir`** (or `features_dir_override`) when pointing to a specific existing directory whose name already includes the model suffix.
-- Use **`--features`** (or `features_subfolder_override`) when you only want to override the base name; the current model key is still auto-appended.
+> **Important:** `--features` and `--feature_dir` both use the value **exactly as typed** — the model name is **not** auto-appended. Use the full directory name including the model suffix.
 
 **YAML:**
 ```yaml
 feature_extraction:
-  # BASE name — model always appended:
-  features_subfolder_override: "patch512_step512_level0"
-  # → resolves to: features/patch512_step512_level0__rn50/
-
   # EXACT name — model NOT appended:
   features_dir_override: "patch512_step512_level0__uni"
-  # → resolves to: features/patch512_step512_level0__uni/
+  # OR base name with model auto-appended:
+  features_subfolder_override: "patch512_step512_level0"
+  # → resolves to: features/patch512_step512_level0__rn50/
 ```
 
 **CLI:**
 ```bash
-# Base name (model auto-appended)
-python main.py train --config config/config.yaml --features patch512_step512_level0
-# reads from: results/features/patch512_step512_level0__rn50/pt_files/
-
-# Exact name (model NOT appended — highest priority)
+# Both flags are identical — exact name, model NOT appended:
+python main.py train --config config/config.yaml --features patch512_step512_level0__uni
 python main.py train --config config/config.yaml --feature_dir patch512_step512_level0__uni
-# reads from: results/features/patch512_step512_level0__uni/pt_files/
+# Both read from: results/features/patch512_step512_level0__uni/pt_files/
+
+# Works for all downstream commands:
+python main.py evaluate --config config/config.yaml --features patch512_step512_level0__optimus__TUM
+python main.py heatmap  --config config/config.yaml --features patch512_step512_level0__rn50
+python main.py classify --config config/config.yaml --features patch512_step512_level0__optimus__TUM
 ```
 
 ### Override priority (highest → lowest)
 
-1. CLI flag `--feature_dir` (exact, no model appended)
-2. CLI flag `--features` (base name, model auto-appended)
+1. CLI flag `--features` / `--feature_dir` (exact, no model appended)
+2. YAML `features_dir_override` (exact, no model appended)
 3. YAML `features_subfolder_override` (base, model auto-appended)
-4. YAML `features_dir_override` (exact, no model appended)
-5. Auto-derived from config parameters
+4. Auto-derived from config parameters
 
 ---
 
