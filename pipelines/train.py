@@ -326,15 +326,18 @@ def command_train(config: dict, dirs_dict: dict, log=None):
     _log.info(f"Model: {mil_name} | Params: {n_params:,} | Classes: {n_classes}")
 
     # ── Optimiser & scheduler ──────────────────────────────────────────────────
-    lr           = float(train_cfg.get('learning_rate',   2e-4))
-    wd           = float(train_cfg.get('weight_decay',    1e-4))
-    b1           = float(train_cfg.get('beta1',           0.9))
-    b2           = float(train_cfg.get('beta2',           0.999))
-    opt_name     = train_cfg.get('optimizer', 'AdamW')
-    warmup_ep    = int(train_cfg.get('warmup_epochs', 0))
-    sched_name   = train_cfg.get('lr_scheduler', 'plateau')
+    lr            = float(train_cfg.get('learning_rate',   2e-4))
+    wd            = float(train_cfg.get('weight_decay',    1e-4))
+    b1            = float(train_cfg.get('beta1',           0.9))
+    b2            = float(train_cfg.get('beta2',           0.999))
+    opt_name      = train_cfg.get('optimizer', 'AdamW')
+    warmup_ep     = int(train_cfg.get('warmup_epochs', 0))
+    sched_name    = train_cfg.get('lr_scheduler', 'plateau')
     patch_dropout = float(train_cfg.get('patch_dropout', 0.0))
     patch_shuffle = bool(train_cfg.get('patch_shuffle', False))
+
+    # max_ep MUST be defined before the scheduler block (StepLR + CosineAnnealingLR need it)
+    max_ep = int(train_cfg.get('max_epochs', 100))
 
     if opt_name == 'Adam':
         optimizer = torch.optim.Adam(
@@ -358,20 +361,22 @@ def command_train(config: dict, dirs_dict: dict, log=None):
     loss_fn = _build_loss_fn(config, class_names, device)
 
     if warmup_ep > 0:
-        _log.info(f"  LR warmup: {warmup_ep} epochs")
+        _log.info(f"  LR warmup      : {warmup_ep} epochs")
     if patch_dropout > 0:
-        _log.info(f"  Patch dropout: {patch_dropout:.2f}")
+        _log.info(f"  Patch dropout  : {patch_dropout:.2f}")
     if patch_shuffle:
-        _log.info("  Patch shuffle: enabled")
+        _log.info("  Patch shuffle  : enabled")
+    _log.info(f"  Optimizer      : {opt_name} | LR={lr:.2e} | WD={wd:.2e}")
+    _log.info(f"  Scheduler      : {sched_name} | max_epochs={max_ep}")
 
-    # ── Early stopping ─────────────────────────────────────────────────────────
+    # ── Early stopping ──────────────────────────────────────────────────────────
     do_es  = bool(train_cfg.get('early_stopping', True))
     es_pat = int(train_cfg.get('early_stopping_patience', 20))
     es_min = int(train_cfg.get('early_stopping_min_epochs', 10))
-    max_ep = int(train_cfg.get('max_epochs', 100))
 
     best_val_loss = float('inf')
     es_counter    = 0
+
 
     # ── Experiment directory ───────────────────────────────────────────────────
     stamp     = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')

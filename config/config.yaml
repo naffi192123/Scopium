@@ -303,3 +303,17 @@ patch_classifier:
   # ── Category colour palette (for reference) ──────────────────────────────────
   # ADI → tan       DEB → grey    LYM → purple  MUC → teal
   # MUS → orange    NOR → green   STR → blue     TUM → red
+
+
+# ─── Cross-Validation ─────────────────────────────────────────────────────────
+# Used by: python main.py crossval --config config/config.yaml
+# Also supports: python main.py crossval --config config/config.yaml --use_best_config
+crossval:
+  # Label for this CV experiment (determines output directory)
+  study_name: crossval
+
+  # Number of folds for stratified k-fold
+  n_folds: 5
+
+  # Random seed for reproducibility
+  seed: 42

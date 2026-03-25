@@ -553,3 +553,118 @@ python main.py train --config config/config.yaml --features patch256_step256_lev
 ## Logging
 
 All commands write a structured log to `results/wsi_framework.log` (rotating, 10 MB max).
+
+---
+
+## Hyperparameter Optimisation (HPO)
+
+HPO uses [Optuna](https://optuna.org/) to search over MIL model architectures, optimizers, regularization, and schedulers automatically.
+
+### Installation
+
+```bash
+pip install optuna tqdm   # tqdm is optional but recommended for progress display
+```
+
+### Feature Directory Selection for HPO
+
+Pass `--features` exactly as you would for training:
+
+```bash
+python main.py hpo --config config/config.yaml --features patch512_step512_level0__optimus__TUM
+```
+
+### Run HPO
+
+```bash
+# Single train/val split (default)
+python main.py hpo --config config/config.yaml
+
+# K-fold CV within each HPO trial (set hpo.n_folds > 1 in config.yaml)
+# hpo:
+#   n_folds: 5
+python main.py hpo --config config/config.yaml
+```
+
+Progress is displayed live via tqdm (1 bar per trial, showing current metric and loss).  
+If tqdm is not installed, progress is logged every 5 epochs instead.
+
+Studies are **resumable** — re-running reloads `results/hpo/<study_name>/study.db`.
+
+### HPO Outputs
+
+```
+results/hpo/<study_name>/
+    trial_XXXX/
+        trial_config.yaml       ← merged config for this trial
+        trial_metrics.json      ← per-epoch val AUC/acc/f1
+    best_config.yaml            ← best hyperparameters
+    best_trial.json             ← best trial summary
+    hpo_results.csv             ← all trials sorted by metric
+    study.db                    ← Optuna SQLite (for resuming)
+```
+
+### Train with Best HPO Config
+
+```bash
+python main.py train --config config/config.yaml --use_best_config
+```
+
+---
+
+## K-Fold Cross-Validation
+
+A dedicated cross-validation pipeline evaluates the model across all data using stratified k-fold.
+
+### Run CV (default config)
+
+```bash
+python main.py crossval --config config/config.yaml
+```
+
+### Run CV with Best HPO Config
+
+```bash
+python main.py crossval --config config/config.yaml --use_best_config
+```
+
+### Feature Directory Selection for CV
+
+```bash
+python main.py crossval --config config/config.yaml --features patch512_step512_level0__optimus__TUM
+```
+
+### CV Outputs
+
+```
+results/crossval/<study_name>/
+    fold_01/
+        best_model.pt          ← best checkpoint for this fold
+        fold_metrics.json      ← best val AUC/acc/f1 for this fold
+    ...
+    cv_summary.json            ← mean ± std across all folds
+    cv_summary.csv             ← per-fold table
+    combined_pool.csv          ← merged train+val dataset used for CV
+```
+
+### CV Configuration (config.yaml)
+
+```yaml
+crossval:
+  study_name: crossval   # output subdirectory
+  n_folds: 5             # number of folds
+  seed: 42               # random seed
+```
+
+---
+
+## Parameter Validation
+
+Both HPO and cross-validation check that all required config keys are present **before** starting, with clear error messages if anything is missing:
+
+```
+HPO: config missing required key 'task.class_names'
+HPO aborted due to missing configuration keys.
+```
+
+Required keys: `mil.model`, `task.name`, `task.num_classes`, `task.class_names`, `training.max_epochs`, `paths.results_dir`.

@@ -14,6 +14,7 @@ from pipelines.visualize import command_heatmap
 from pipelines.classify import command_classify
 from pipelines.classify_heatmap import command_classify_heatmap
 from pipelines.hpo import command_hpo, load_best_config
+from pipelines.crossval import command_crossval
 from utils.logger import setup_logger
 import pandas as pd
 
@@ -22,7 +23,7 @@ def parse_args():
     parser.add_argument("command", choices=[
         "process", "stats", "segment", "debug-segmentation", "extract-tile",
         "extract", "analyse", "split", "train", "evaluate", "heatmap",
-        "classify", "classify-heatmap", "hpo"],
+        "classify", "classify-heatmap", "hpo", "crossval"],
         help="Command to execute")
     parser.add_argument("--config", type=str, default="config/config.yaml", help="Path to the config file")
     parser.add_argument("--csv", type=str, default=None, help="[analyse/split] Path to annotation CSV")
@@ -198,6 +199,11 @@ def main():
                                  slide_override=args.slide)
     elif args.command == "hpo":
         command_hpo(config, dirs_dict, logger)
+    elif args.command == "crossval":
+        # Optionally merge best HPO config before cross-validation
+        if getattr(args, 'use_best_config', False):
+            config = load_best_config(config, log=logger)
+        command_crossval(config, dirs_dict, logger)
 
 if __name__ == "__main__":
     main()
