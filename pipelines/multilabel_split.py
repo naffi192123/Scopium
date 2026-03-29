@@ -121,11 +121,13 @@ def _iterative_train_test_split(
             order=2 if lm_shuf.shape[1] > 1 else 1,
             sample_distribution_per_fold=[test_size, 1 - test_size],
         )
-        # split() returns (test_indices, train_indices) — two folds
+        # split() yields (train_indices, test_indices) per fold — sklearn convention.
+        # With sample_distribution_per_fold=[test_size, 1-test_size]:
+        #   folds[0][0] = large partition indices (train, 1-test_size)
+        #   folds[0][1] = small partition indices (test,  test_size)
         folds = list(stratifier.split(np.zeros((n, 1)), lm_shuf))
-        # First fold → test; second fold → train
-        test_idxs  = sorted(folds[0][0])
-        train_idxs = sorted(folds[0][1])
+        train_idxs = sorted(folds[0][0])   # large partition → train
+        test_idxs  = sorted(folds[0][1])   # small partition → test
         return df_shuf.iloc[train_idxs].reset_index(drop=True), \
                df_shuf.iloc[test_idxs].reset_index(drop=True)
     else:

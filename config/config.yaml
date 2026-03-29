@@ -450,8 +450,8 @@ multilabel_crossval:
 multilabel_split:
   type: train_val_test   # train_test | train_val_test
   train_size: 0.70
-  val_size: 0.10
-  test_size: 0.20
+  val_size: 0.15
+  test_size: 0.15
   random_seed: 42
   # Stratification uses IterativeStratification (skmultilearn) if available,
   # falls back to random split with a warning.
