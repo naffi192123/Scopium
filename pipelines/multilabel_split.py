@@ -103,18 +103,31 @@ def _iterative_train_test_split(
     test_size: float,
     seed: int,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """Split using iterative stratification (skmultilearn)."""
+    """Split using iterative stratification (skmultilearn).
+
+    IterativeStratification does not accept random_state directly.
+    We pre-shuffle with numpy to achieve reproducibility.
+    """
     if _SKMULTILEARN:
+        # Pre-shuffle for reproducibility (IterativeStratification ignores random_state)
+        rng       = np.random.RandomState(seed)
+        n         = len(df)
+        perm      = rng.permutation(n)
+        df_shuf   = df.iloc[perm].reset_index(drop=True)
+        lm_shuf   = label_matrix[perm]
+
         stratifier = IterativeStratification(
             n_splits=2,
-            order=2 if label_matrix.shape[1] > 1 else 1,
+            order=2 if lm_shuf.shape[1] > 1 else 1,
             sample_distribution_per_fold=[test_size, 1 - test_size],
-            random_state=seed)
-        test_idxs_gen, train_idxs_gen = stratifier.split(
-            np.zeros((len(df), 1)), label_matrix)
-        train_idxs = list(train_idxs_gen)
-        test_idxs  = list(test_idxs_gen)
-        return df.iloc[train_idxs], df.iloc[test_idxs]
+        )
+        # split() returns (test_indices, train_indices) — two folds
+        folds = list(stratifier.split(np.zeros((n, 1)), lm_shuf))
+        # First fold → test; second fold → train
+        test_idxs  = sorted(folds[0][0])
+        train_idxs = sorted(folds[0][1])
+        return df_shuf.iloc[train_idxs].reset_index(drop=True), \
+               df_shuf.iloc[test_idxs].reset_index(drop=True)
     else:
         logger.warning(
             "scikit-multilearn not installed — using random split.\n"

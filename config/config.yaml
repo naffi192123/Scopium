@@ -328,7 +328,7 @@ multilabel:
   # REQUIRED: ordered list of all possible label names.
   # The order defines the index in the binary label vector.
   # Example (NCT-CRC 9-class tissue): [ADI, DEB, LYM, MUC, MUS, NOR, STR, TUM, back]
-  label_names: []
+  label_names: [TTN,TP53,MUC16]
 
   # Column auto-detection for slide IDs (null = auto-detect common names)
   slide_col: null
