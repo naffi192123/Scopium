@@ -15,6 +15,13 @@ from pipelines.classify import command_classify
 from pipelines.classify_heatmap import command_classify_heatmap
 from pipelines.hpo import command_hpo, load_best_config
 from pipelines.crossval import command_crossval
+# ── Multi-Label pipeline imports ──────────────────────────────────────────────
+from pipelines.multilabel_split import command_multilabel_split
+from pipelines.multilabel_train import command_multilabel_train
+from pipelines.multilabel_evaluate import command_multilabel_evaluate
+from pipelines.multilabel_hpo import command_multilabel_hpo, load_best_multilabel_config
+from pipelines.multilabel_crossval import command_multilabel_crossval
+from utils.multilabel_validator import command_multilabel_validate
 from utils.logger import setup_logger
 import pandas as pd
 
@@ -23,7 +30,11 @@ def parse_args():
     parser.add_argument("command", choices=[
         "process", "stats", "segment", "debug-segmentation", "extract-tile",
         "extract", "analyse", "split", "train", "evaluate", "heatmap",
-        "classify", "classify-heatmap", "hpo", "crossval"],
+        "classify", "classify-heatmap", "hpo", "crossval",
+        # ── Multi-label commands ──────────────────────────────────────────────
+        "multilabel-split", "multilabel-train", "multilabel-evaluate",
+        "multilabel-hpo", "multilabel-crossval", "multilabel-validate",
+    ],
         help="Command to execute")
     parser.add_argument("--config", type=str, default="config/config.yaml", help="Path to the config file")
     parser.add_argument("--csv", type=str, default=None, help="[analyse/split] Path to annotation CSV")
@@ -53,8 +64,13 @@ def parse_args():
              "(without file extension). Overrides patch_classifier.heatmap.slides in config.")
     parser.add_argument(
         "--use_best_config", action="store_true",
-        help="[train] Load best_config.yaml from the HPO results directory and "
-             "merge it into config before training. Run `hpo` first to generate it.")
+        help="[train/crossval/multilabel-train/multilabel-crossval] "
+             "Load best_config.yaml from the HPO results directory and "
+             "merge it into config before training. Run `hpo` or `multilabel-hpo` first.")
+    parser.add_argument(
+        "--split", type=str, default="test",
+        metavar="SPLIT",
+        help="[multilabel-evaluate] Which split to evaluate on: test | val (default: test)")
     return parser.parse_args()
 
 def get_slide_paths(config):
@@ -204,6 +220,26 @@ def main():
         if getattr(args, 'use_best_config', False):
             config = load_best_config(config, log=logger)
         command_crossval(config, dirs_dict, logger)
+    # ── Multi-label commands ──────────────────────────────────────────────────
+    elif args.command == "multilabel-split":
+        command_multilabel_split(config, dirs_dict, logger, csv_path=args.csv)
+    elif args.command == "multilabel-validate":
+        command_multilabel_validate(config, dirs_dict, csv_path=args.csv, log=logger)
+    elif args.command == "multilabel-train":
+        if getattr(args, 'use_best_config', False):
+            config = load_best_multilabel_config(config, log=logger)
+        command_multilabel_train(config, dirs_dict, logger)
+    elif args.command == "multilabel-evaluate":
+        command_multilabel_evaluate(
+            config, dirs_dict, logger,
+            experiment_dir=args.experiment,
+            split=getattr(args, 'split', 'test'))
+    elif args.command == "multilabel-hpo":
+        command_multilabel_hpo(config, dirs_dict, logger)
+    elif args.command == "multilabel-crossval":
+        if getattr(args, 'use_best_config', False):
+            config = load_best_multilabel_config(config, log=logger)
+        command_multilabel_crossval(config, dirs_dict, logger)
 
 if __name__ == "__main__":
     main()

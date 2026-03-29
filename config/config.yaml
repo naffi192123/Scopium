@@ -307,13 +307,151 @@ patch_classifier:
 
 # ─── Cross-Validation ─────────────────────────────────────────────────────────
 # Used by: python main.py crossval --config config/config.yaml
-# Also supports: python main.py crossval --config config/config.yaml --use_best_config
 crossval:
-  # Label for this CV experiment (determines output directory)
   study_name: crossval
-
-  # Number of folds for stratified k-fold
   n_folds: 5
-
-  # Random seed for reproducibility
   seed: 42
+
+
+# ==============================================================================
+# MULTI-LABEL MIL CONFIGURATION
+# ==============================================================================
+# Completely separate pipeline saved to results/multilabel/
+# Tiling and feature extraction are shared with the single-label pipeline.
+
+# ─── Multi-Label task ─────────────────────────────────────────────────────────
+# Used by: python main.py multilabel-* --config config/config.yaml
+multilabel:
+  # Sub-name for this multi-label task (used in split/experiment directory names)
+  task_name: multilabel_task
+
+  # REQUIRED: ordered list of all possible label names.
+  # The order defines the index in the binary label vector.
+  # Example (NCT-CRC 9-class tissue): [ADI, DEB, LYM, MUC, MUS, NOR, STR, TUM, back]
+  label_names: []
+
+  # Column auto-detection for slide IDs (null = auto-detect common names)
+  slide_col: null
+
+  # ── CSV format (choose one) ──────────────────────────────────────────────────
+  # Option A — Binary columns (one column per label, 0/1 values):
+  #   slide_id, ADI, DEB, LYM, MUC, MUS, NOR, STR, TUM
+  #   TCGA-XX,   1,   0,   1,   0,   0,   0,   1,   0
+  binary_columns: true
+
+  # Option B — String column (one comma-separated column):
+  #   slide_id, labels
+  #   TCGA-XX, "ADI,LYM,STR"
+  # Set binary_columns: false and set labels_string_col to the column name.
+  labels_string_col: null   # e.g. "labels"
+
+  # Sigmoid decision threshold for binary predictions [0.0, 1.0]
+  # Predictions: (sigmoid(logit) > threshold) → 1 (positive label present)
+  threshold: 0.5
+
+# ─── Multi-Label Training ─────────────────────────────────────────────────────
+# Used by: python main.py multilabel-train --config config/config.yaml
+multilabel_training:
+  max_epochs: 100
+  learning_rate: 2.0e-4
+  weight_decay: 1.0e-4
+  optimizer: AdamW           # Adam | AdamW
+  lr_scheduler: plateau      # plateau | cosine | step
+
+  # LR warmup (linear ramp over first N epochs)
+  warmup_epochs: 0
+
+  # Early stopping
+  early_stopping: true
+  early_stopping_patience: 20
+  early_stopping_min_epochs: 10
+
+  # ── Loss function ─────────────────────────────────────────────────────────────
+  # bce   : BCEWithLogitsLoss (default)
+  # focal : Focal loss — (1 - p)^gamma * BCE
+  loss: bce
+
+  # Per-label positive weighting (pos_weight = neg_count / pos_count, clamped).
+  # Helps with class imbalance. Recommended: true
+  weighted_loss: true
+
+  # Clips target labels to [eps, 1-eps] — mild label smoothing for multi-label
+  label_smoothing: 0.05
+
+  # Focal loss parameters (only used when loss: focal)
+  focal_alpha: 0.25
+  focal_gamma: 2.0
+
+  # Metric to use for best-checkpoint selection
+  # Options: macro_auc | micro_auc | macro_f1 | micro_f1 | subset_acc
+  monitor_metric: macro_auc
+
+  # Patch-level regularisation
+  patch_dropout: 0.0          # fraction of patches to drop randomly each step
+  patch_shuffle: false        # shuffle patch order each step
+  max_patches: null           # cap bag size (null = use all patches)
+
+  # DataLoader workers (inherit from training.num_workers if not set)
+  # num_workers: 0
+
+
+# ─── Multi-Label HPO ──────────────────────────────────────────────────────────
+# Used by: python main.py multilabel-hpo --config config/config.yaml
+multilabel_hpo:
+  study_name: ml_hpo
+  n_trials: 30
+  epochs_per_trial: 30
+  n_folds: 1               # 1 = train/val split; >1 = k-fold within each trial
+  metric: val_macro_auc    # val_macro_auc | val_micro_auc | val_macro_f1
+  direction: maximize
+  pruning: true
+  timeout_hours: null      # stop after N hours (null = run all n_trials)
+
+  # Pin a specific HPO run for --use_best_config (null = auto-select most recent)
+  best_run_path: null
+
+  # ── Search space ──────────────────────────────────────────────────────────────
+  # Ranges/choices for each hyperparameter.
+  # Set a key to null to keep the config.yaml value fixed.
+  search_space:
+    model:               [abmil, clam_sb, clam_mb, mean_pool, transmil, dsmil]
+    optimizer:           [AdamW, Adam]
+    learning_rate:       [1.0e-4, 2.0e-3]
+    weight_decay:        [1.0e-5, 5.0e-4]
+    dropout:             [0.1, 0.6]
+    dropout_attn:        [0.2, 0.4]
+    dropout_classifier:  [0.1, 0.3]
+    attn_hidden_dim:     [32, 64, 128]
+    feature_proj_dim:    [256, 512]
+    lr_scheduler:        [cosine, step, plateau]
+    label_smoothing:     [0.0, 0.15]
+    early_stop_patience: [10, 15]
+    warmup_epochs:       [0, 2, 5]
+    patch_dropout:       [0.0, 0.3]
+    patch_shuffle:       [true]
+    max_patches:         [null, 1000, 2000]
+    loss:                [bce, focal]
+    focal_gamma:         [1.0, 3.0]
+    threshold:           [0.3, 0.7]
+
+
+# ─── Multi-Label Cross-Validation ─────────────────────────────────────────────
+# Used by: python main.py multilabel-crossval --config config/config.yaml
+multilabel_crossval:
+  study_name: ml_crossval
+  n_folds: 5
+  seed: 42
+
+
+# ─── Multi-Label Splitting ────────────────────────────────────────────────────
+# Used by: python main.py multilabel-split --config config/config.yaml --csv ...
+# Inherits split.type, split.test_size etc. from the split: section above,
+# unless overridden here.
+multilabel_split:
+  type: train_val_test   # train_test | train_val_test
+  train_size: 0.70
+  val_size: 0.10
+  test_size: 0.20
+  random_seed: 42
+  # Stratification uses IterativeStratification (skmultilearn) if available,
+  # falls back to random split with a warning.
