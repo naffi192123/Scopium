@@ -269,24 +269,24 @@ def _suggest_hyperparams(trial, hpo_cfg: dict, base_config: dict) -> dict:
 
     return {
         'mil': {
-            'model':            model_key,
-            'hidden_dim':       hidden_dim,
-            'dropout':          dropout,
-            'dropout_attn':     dropout_attn,
+            'model':     model_key,
+            'hidden_dim': hidden_dim,
+            'dropout':   dropout,
+            'dropout_attn':       dropout_attn,
             'dropout_classifier': dropout_clf,
-            'feature_proj_dim': proj_dim,
+            'proj_dim':  proj_dim,         # internal projection size (was feature_proj_dim)
         },
         'training': {
-            'optimizer':              optimizer_name,
-            'learning_rate':          lr,
-            'weight_decay':           wd,
-            'lr_scheduler':           scheduler_name,
-            'label_smoothing':        label_smoothing,
+            'optimizer':               optimizer_name,
+            'learning_rate':           lr,
+            'weight_decay':            wd,
+            'lr_scheduler':            scheduler_name,
+            'label_smoothing':         label_smoothing,
             'early_stopping_patience': es_patience,
-            'warmup_epochs':          warmup_epochs,
-            'patch_dropout':          patch_dropout,
-            'patch_shuffle':          patch_shuffle,
-            'max_patches':            max_patches,
+            'warmup_epochs':           warmup_epochs,
+            'patch_dropout':           patch_dropout,
+            'patch_shuffle':           patch_shuffle,
+            'max_patches':             max_patches,
         },
     }
 

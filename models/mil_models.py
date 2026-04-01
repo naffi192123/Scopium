@@ -50,16 +50,17 @@ def initialize_weights(module):
 # ---------------------------------------------------------------------------
 class MeanPoolMIL(nn.Module):
     """Global average pool -> linear classifier."""
-    def __init__(self, encoding_size=1024, n_classes=2, dropout=0.25, **kw):
+    def __init__(self, encoding_size=1024, n_classes=2,
+                 dropout=0.25, proj_dim=512, **kw):
         super().__init__()
         self.classifier = nn.Sequential(
-            nn.Linear(encoding_size, 512), nn.ReLU(),
+            nn.Linear(encoding_size, proj_dim), nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(512, n_classes))
+            nn.Linear(proj_dim, n_classes))
         initialize_weights(self)
 
     def forward(self, h):
-        h     = h.mean(dim=0, keepdim=True)          # (1, D)
+        h      = h.mean(dim=0, keepdim=True)          # (1, D)
         logits = self.classifier(h)                   # (1, n_classes)
         Y_prob = F.softmax(logits, dim=1)
         Y_hat  = logits.argmax(dim=1)
@@ -71,12 +72,13 @@ class MeanPoolMIL(nn.Module):
 # ---------------------------------------------------------------------------
 class MaxPoolMIL(nn.Module):
     """Global max pool -> linear classifier."""
-    def __init__(self, encoding_size=1024, n_classes=2, dropout=0.25, **kw):
+    def __init__(self, encoding_size=1024, n_classes=2,
+                 dropout=0.25, proj_dim=512, **kw):
         super().__init__()
         self.classifier = nn.Sequential(
-            nn.Linear(encoding_size, 512), nn.ReLU(),
+            nn.Linear(encoding_size, proj_dim), nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(512, n_classes))
+            nn.Linear(proj_dim, n_classes))
         initialize_weights(self)
 
     def forward(self, h):
@@ -107,21 +109,21 @@ class _GatedAttn(nn.Module):
 class ABMIL(nn.Module):
     """Gated Attention-Based MIL."""
     def __init__(self, encoding_size=1024, n_classes=2,
-                 hidden_dim=256, dropout=0.25, **kw):
+                 hidden_dim=256, dropout=0.25, proj_dim=512, **kw):
         super().__init__()
         self.projection = nn.Sequential(
-            nn.Linear(encoding_size, 512), nn.ReLU(), nn.Dropout(dropout))
-        self.attn       = _GatedAttn(512, hidden_dim, dropout)
-        self.classifier = nn.Linear(512, n_classes)
+            nn.Linear(encoding_size, proj_dim), nn.ReLU(), nn.Dropout(dropout))
+        self.attn       = _GatedAttn(proj_dim, hidden_dim, dropout)
+        self.classifier = nn.Linear(proj_dim, n_classes)
         initialize_weights(self)
 
     def forward(self, h, attention_only=False):
-        h      = self.projection(h)                   # (N, 512)
+        h      = self.projection(h)                   # (N, proj_dim)
         A      = self.attn(h)                         # (N, 1)
         A_soft = F.softmax(A, dim=0)                  # (N, 1)
         if attention_only:
             return A_soft.squeeze()                   # (N,)
-        M      = (A_soft * h).sum(dim=0, keepdim=True)# (1, 512)
+        M      = (A_soft * h).sum(dim=0, keepdim=True)# (1, proj_dim)
         logits = self.classifier(M)                   # (1, n_classes)
         Y_prob = F.softmax(logits, dim=1)
         Y_hat  = logits.argmax(dim=1)
@@ -147,17 +149,17 @@ class CLAM_SB(nn.Module):
     """CLAM Single-Branch."""
     def __init__(self, encoding_size=1024, n_classes=2,
                  hidden_dim=256, dropout=0.25, k_sample=8,
-                 instance_loss_fn=None, **kw):
+                 instance_loss_fn=None, proj_dim=512, **kw):
         super().__init__()
         self.n_classes = n_classes
         self.k_sample  = k_sample
         self.ifn       = instance_loss_fn or nn.CrossEntropyLoss()
 
-        self.proj  = nn.Sequential(nn.Linear(encoding_size, 512),
+        self.proj  = nn.Sequential(nn.Linear(encoding_size, proj_dim),
                                    nn.ReLU(), nn.Dropout(dropout))
-        self.attn  = _AttnNetGated(512, hidden_dim, dropout, n_classes=1)
-        self.clf   = nn.Linear(512, n_classes)
-        self.inst_clfs = nn.ModuleList([nn.Linear(512, 2) for _ in range(n_classes)])
+        self.attn  = _AttnNetGated(proj_dim, hidden_dim, dropout, n_classes=1)
+        self.clf   = nn.Linear(proj_dim, n_classes)
+        self.inst_clfs = nn.ModuleList([nn.Linear(proj_dim, 2) for _ in range(n_classes)])
         initialize_weights(self)
 
     def _inst_eval(self, A, h, clf):
@@ -173,12 +175,12 @@ class CLAM_SB(nn.Module):
 
     def forward(self, h, label=None, instance_eval=False, attention_only=False):
         h      = self.proj(h)
-        A, h   = self.attn(h)                         # (N,1), (N,512)
+        A, h   = self.attn(h)                         # (N,1), (N, proj_dim)
         A      = A.squeeze(1)                         # (N,)
         if attention_only:
             return F.softmax(A, dim=0)
         A_soft = F.softmax(A, dim=0)
-        M      = (A_soft.unsqueeze(1) * h).sum(0, keepdim=True)   # (1,512)
+        M      = (A_soft.unsqueeze(1) * h).sum(0, keepdim=True)   # (1, proj_dim)
         logits = self.clf(M)
         Y_prob = F.softmax(logits, dim=1)
         Y_hat  = logits.argmax(dim=1)
@@ -205,28 +207,28 @@ class CLAM_MB(nn.Module):
     """CLAM Multi-Branch — one attention branch per class."""
     def __init__(self, encoding_size=1024, n_classes=2,
                  hidden_dim=256, dropout=0.25, k_sample=8,
-                 instance_loss_fn=None, **kw):
+                 instance_loss_fn=None, proj_dim=512, **kw):
         super().__init__()
         self.n_classes = n_classes
         self.k_sample  = k_sample
         self.ifn       = instance_loss_fn or nn.CrossEntropyLoss()
 
-        self.proj  = nn.Sequential(nn.Linear(encoding_size, 512),
+        self.proj  = nn.Sequential(nn.Linear(encoding_size, proj_dim),
                                    nn.ReLU(), nn.Dropout(dropout))
-        self.attn  = _AttnNetGated(512, hidden_dim, dropout, n_classes=n_classes)
-        self.clfs  = nn.ModuleList([nn.Linear(512, 1) for _ in range(n_classes)])
-        self.inst_clfs = nn.ModuleList([nn.Linear(512, 2) for _ in range(n_classes)])
+        self.attn  = _AttnNetGated(proj_dim, hidden_dim, dropout, n_classes=n_classes)
+        self.clfs  = nn.ModuleList([nn.Linear(proj_dim, 1) for _ in range(n_classes)])
+        self.inst_clfs = nn.ModuleList([nn.Linear(proj_dim, 2) for _ in range(n_classes)])
         initialize_weights(self)
 
     def forward(self, h, label=None, instance_eval=False, attention_only=False):
         h      = self.proj(h)
-        A, h   = self.attn(h)                         # (N, n_classes), (N, 512)
+        A, h   = self.attn(h)                         # (N, n_classes), (N, proj_dim)
         A      = A.transpose(0, 1)                    # (n_classes, N)
         if attention_only:
             return F.softmax(A, dim=1)
         A_soft = F.softmax(A, dim=1)
 
-        M      = torch.mm(A_soft, h)                  # (n_classes, 512)
+        M      = torch.mm(A_soft, h)                  # (n_classes, proj_dim)
         logits = torch.stack([self.clfs[c](M[c]).squeeze() for c in range(self.n_classes)]).unsqueeze(0)
         Y_prob = F.softmax(logits, dim=1)
         Y_hat  = logits.argmax(dim=1)
@@ -285,28 +287,28 @@ class DSMIL(nn.Module):
     bag aggregation uses attention over all instances.
     """
     def __init__(self, encoding_size=1024, n_classes=2,
-                 hidden_dim=256, dropout=0.25, **kw):
+                 hidden_dim=256, dropout=0.25, proj_dim=512, **kw):
         super().__init__()
-        self.proj     = nn.Sequential(nn.Linear(encoding_size, 512),
+        self.proj     = nn.Sequential(nn.Linear(encoding_size, proj_dim),
                                       nn.ReLU(), nn.Dropout(dropout))
-        self.inst_clf = nn.Linear(512, n_classes)
-        self.q        = nn.Linear(512, hidden_dim)
-        self.k        = nn.Linear(512, hidden_dim)
-        self.bag_clf  = nn.Linear(512, n_classes)
+        self.inst_clf = nn.Linear(proj_dim, n_classes)
+        self.q        = nn.Linear(proj_dim, hidden_dim)
+        self.k        = nn.Linear(proj_dim, hidden_dim)
+        self.bag_clf  = nn.Linear(proj_dim, n_classes)
         initialize_weights(self)
 
     def forward(self, h, attention_only=False):
-        h     = self.proj(h)                           # (N, 512)
+        h     = self.proj(h)                           # (N, proj_dim)
         inst_logits = self.inst_clf(h)                 # (N, n_classes)
         crit_idx    = inst_logits.argmax(dim=0)[1]     # most positive instance
-        crit        = h[crit_idx].unsqueeze(0)         # (1, 512)
+        crit        = h[crit_idx].unsqueeze(0)         # (1, proj_dim)
 
         # attention: query=critical_instance, keys=all patches
         scores = (self.q(crit) * self.k(h)).sum(-1)   # (N,)
         A      = F.softmax(scores, dim=0)
         if attention_only:
             return A                                   # (N,)
-        M      = (A.unsqueeze(1) * h).sum(0, keepdim=True)   # (1, 512)
+        M      = (A.unsqueeze(1) * h).sum(0, keepdim=True)   # (1, proj_dim)
 
         bag_logits = self.bag_clf(M)
         # ensemble: average instance and bag predictions
@@ -335,22 +337,28 @@ def build_mil_model(config: dict) -> nn.Module:
     Build and return a MIL model from config.
 
     Uses:
-        config.mil.model          → model key
-        config.mil.encoding_size  → input feature dimension
-        config.mil.hidden_dim     → attention hidden size
-        config.mil.dropout        → dropout rate
-        config.mil.k_sample       → CLAM k_sample
-        config.task.num_classes   → number of output classes
+        config.mil.model           → model key
+        config.mil.encoding_size   → input feature dimension (MUST match .pt files)
+        config.mil.hidden_dim      → attention hidden size
+        config.mil.proj_dim        → internal projection size (default 512)
+        config.mil.dropout         → dropout rate
+        config.mil.k_sample        → CLAM k_sample
+        config.task.num_classes    → number of output classes
     """
     mil_cfg  = config.get('mil', {})
     task_cfg = config.get('task', {})
 
-    model_key    = mil_cfg.get('model', 'abmil').lower().strip()
+    model_key     = mil_cfg.get('model', 'abmil').lower().strip()
     encoding_size = mil_cfg.get('encoding_size', 1024)
-    n_classes    = task_cfg.get('num_classes', 2)
-    hidden_dim   = mil_cfg.get('hidden_dim', 256)
-    dropout      = mil_cfg.get('dropout', 0.25)
-    k_sample     = mil_cfg.get('k_sample', 8)
+    n_classes     = task_cfg.get('num_classes', 2)
+    hidden_dim    = mil_cfg.get('hidden_dim', 256)
+    # proj_dim: internal projection size for attention/classifier layers.
+    # MUST NOT be confused with encoding_size (the actual feature dimension).
+    # HPO can tune this independently via the feature_proj_dim search space param.
+    proj_dim      = mil_cfg.get('proj_dim',
+                        mil_cfg.get('feature_proj_dim', 512))
+    dropout       = mil_cfg.get('dropout', 0.25)
+    k_sample      = mil_cfg.get('k_sample', 8)
 
     if model_key not in _MODEL_REGISTRY:
         raise ValueError(
@@ -361,6 +369,7 @@ def build_mil_model(config: dict) -> nn.Module:
         encoding_size = encoding_size,
         n_classes     = n_classes,
         hidden_dim    = hidden_dim,
+        proj_dim      = proj_dim,
         dropout       = dropout,
         k_sample      = k_sample,
     )
