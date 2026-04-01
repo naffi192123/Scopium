@@ -14,20 +14,25 @@ For each fold:
 
 Aggregates results across folds and saves a summary CSV.
 
+Output directory structure (unique per invocation):
+    results/crossval/
+        <task_name>/
+            <model>__<feat_dir_label>__<YYYYMMDD_HHMMSS>/
+                experiment_info.json   — full provenance metadata
+                config_snapshot.yaml   — exact config used
+                combined_pool.csv      — merged train+val pool
+                fold_01/
+                    best_model.pt
+                    fold_metrics.json
+                ...
+                cv_summary.json        — mean ± std across folds
+                cv_summary.csv
+
 CLI:
-    # Standard CV
     python main.py crossval --config config/config.yaml
-
-    # CV with best HPO config
     python main.py crossval --config config/config.yaml --use_best_config
-
-Output structure:
-    results/crossval/<study_name>/
-        fold_<k>/
-            best_model.pt
-            fold_metrics.json
-        cv_summary.json       — per-fold + mean/std metrics
-        cv_summary.csv
+    python main.py crossval --config config/config.yaml --features <dir>
+    python main.py crossval --config config/config.yaml --use_best_config --features <dir>
 """
 
 import os
@@ -35,6 +40,7 @@ import copy
 import json
 import logging
 import datetime
+import yaml
 
 import numpy as np
 import pandas as pd
@@ -199,7 +205,9 @@ def _train_fold(config: dict, train_dataset, val_dataset,
 def command_crossval(config: dict, dirs_dict: dict, log=None):
     """
     Run stratified k-fold cross-validation for MIL.
-    Saves per-fold metrics and aggregate summary.
+
+    Results are saved to a unique, timestamped directory:
+        results/crossval/<task>/<model>__<feat_label>__<YYYYMMDD_HHMMSS>/
     """
     _log = log or logger
     _seed(42)
@@ -209,15 +217,9 @@ def command_crossval(config: dict, dirs_dict: dict, log=None):
 
     cv_cfg     = config.get('crossval', {})
     n_folds    = int(cv_cfg.get('n_folds', 5))
-    study_name = cv_cfg.get('study_name', 'crossval')
     device     = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-    _log.info("=" * 60)
-    _log.info(f"  CROSS-VALIDATION: {study_name}")
-    _log.info(f"  Folds    : {n_folds}")
-    _log.info(f"  Model    : {config['mil']['model']}")
-    _log.info(f"  Device   : {device}")
-    _log.info("=" * 60)
+    mil_name   = config['mil']['model']
+    task_name  = config['task']['name']
 
     # ── Resolve feature dir ────────────────────────────────────────────────────
     feat_dir   = dirs_dict.get('features')
@@ -231,12 +233,48 @@ def command_crossval(config: dict, dirs_dict: dict, log=None):
         _log.error(f"Feature pt_files directory not found: {pt_dir}")
         return
 
+    # ── Build unique run directory ─────────────────────────────────────────────
+    # Encodes: task / model / feature-dir-label / datetime
+    feat_label = os.path.basename(feat_dir.rstrip('/\\'))
+    timestamp  = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    run_name   = f"{mil_name}__{feat_label}__{timestamp}"
+    cv_root    = os.path.join(
+        config['paths']['results_dir'], 'crossval', task_name, run_name)
+    os.makedirs(cv_root, exist_ok=True)
+
+    _log.info('=' * 60)
+    _log.info(f'  CROSS-VALIDATION')
+    _log.info(f'  Task     : {task_name}')
+    _log.info(f'  Model    : {mil_name}')
+    _log.info(f'  Features : {feat_label}')
+    _log.info(f'  Folds    : {n_folds}')
+    _log.info(f'  Device   : {device}')
+    _log.info(f'  Run dir  : {cv_root}')
+    _log.info('=' * 60)
+
+    # ── Save provenance metadata ───────────────────────────────────────────────
+    exp_info = {
+        'run_name'      : run_name,
+        'task_name'     : task_name,
+        'model'         : mil_name,
+        'n_folds'       : n_folds,
+        'feature_dir'   : feat_dir,
+        'feat_label'    : feat_label,
+        'timestamp'     : timestamp,
+        'device'        : str(device),
+        'encoding_size' : config['mil'].get('encoding_size'),
+        'class_names'   : config['task'].get('class_names'),
+        'cv_root'       : cv_root,
+    }
+    with open(os.path.join(cv_root, 'experiment_info.json'), 'w') as f:
+        json.dump(exp_info, f, indent=2)
+    with open(os.path.join(cv_root, 'config_snapshot.yaml'), 'w') as f:
+        yaml.dump(config, f, default_flow_style=False)
+
     # ── Load full dataset (train + val combined for CV) ─────────────────────
-    task_name   = config['task']['name']
     class_names = config['task']['class_names']
     splits_dir  = os.path.join(config['paths']['results_dir'], 'splits', task_name)
 
-    # Combine train + val splits into one pool for stratified CV
     dfs = []
     for split in ('train', 'val'):
         csv_path = os.path.join(splits_dir, f'{split}.csv')
@@ -247,18 +285,12 @@ def command_crossval(config: dict, dirs_dict: dict, log=None):
         return
 
     combined_df = pd.concat(dfs, ignore_index=True)
-    # Detect label column
     cols    = [c.lower() for c in combined_df.columns]
     lbl_col = next((c for c in cols if c in ('label', 'subtype', 'diagnosis', 'class')), cols[-1])
-    # Map label strings to indices
     class_to_idx = {c: i for i, c in enumerate(class_names)}
     labels_all = combined_df.iloc[:, cols.index(lbl_col)].astype(str).map(
         lambda x: class_to_idx.get(x, 0)).values
 
-    # Build full dataset
-    # Write combined CSV temporarily so MILBagDataset can read it
-    cv_root = os.path.join(config['paths']['results_dir'], 'crossval', study_name)
-    os.makedirs(cv_root, exist_ok=True)
     combined_csv = os.path.join(cv_root, 'combined_pool.csv')
     combined_df.to_csv(combined_csv, index=False)
 
@@ -319,25 +351,31 @@ def command_crossval(config: dict, dirs_dict: dict, log=None):
 
     # ── Aggregate ──────────────────────────────────────────────────────────────
     _log.info(f"\n{'='*60}")
-    _log.info("  CROSS-VALIDATION RESULTS")
+    _log.info('  CROSS-VALIDATION RESULTS')
 
     metric_keys = [k for k in fold_results[0] if isinstance(fold_results[0][k], float)]
-    summary = {'n_folds': n_folds, 'model': config['mil']['model'],
-               'timestamp': datetime.datetime.now().isoformat(timespec='seconds')}
+    summary = {
+        'run_name'   : run_name,
+        'task_name'  : task_name,
+        'model'      : mil_name,
+        'feat_label' : feat_label,
+        'n_folds'    : n_folds,
+        'timestamp'  : timestamp,
+        'cv_root'    : cv_root,
+    }
     for mk in metric_keys:
         vals = [r[mk] for r in fold_results if mk in r]
         summary[f'mean_{mk}'] = float(np.mean(vals))
         summary[f'std_{mk}']  = float(np.std(vals))
-        _log.info(f"  {mk:20s}: {np.mean(vals):.4f} ± {np.std(vals):.4f}")
+        _log.info(f"  {mk:20s}: {np.mean(vals):.4f} \u00b1 {np.std(vals):.4f}")
 
-    _log.info("=" * 60)
+    _log.info('=' * 60)
 
-    # Save summary
     with open(os.path.join(cv_root, 'cv_summary.json'), 'w') as f:
         json.dump({'summary': summary, 'fold_results': fold_results}, f, indent=2)
 
-    df_results = pd.DataFrame(fold_results)
-    df_results.to_csv(os.path.join(cv_root, 'cv_summary.csv'), index=False)
+    pd.DataFrame(fold_results).to_csv(
+        os.path.join(cv_root, 'cv_summary.csv'), index=False)
 
     _log.info(f"\n  CV results → {cv_root}")
     return cv_root

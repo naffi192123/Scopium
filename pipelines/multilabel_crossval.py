@@ -8,21 +8,26 @@ Supports:
   - Falls back to StratifiedKFold on most-common label when skmultilearn absent
   - Integration with --use_best_config for HPO param reuse
 
+Output directory structure (unique per invocation):
+    results/multilabel/crossval/
+        <task_name>/
+            <model>__<feat_dir_label>__<YYYYMMDD_HHMMSS>/
+                experiment_info.json   — full provenance metadata
+                config_snapshot.yaml   — exact config used
+                combined_pool.csv      — merged train+val pool
+                fold_01/
+                    best_model.pt
+                    fold_metrics.json
+                ...
+                cv_summary.json        — mean ± std across folds
+                cv_summary.csv
+
 CLI:
     python main.py multilabel-crossval --config config/config.yaml
     python main.py multilabel-crossval --config config/config.yaml --use_best_config
     python main.py multilabel-crossval --config config/config.yaml --features <dir>
     python main.py multilabel-crossval --config config/config.yaml --use_best_config \\
                                         --features <dir>
-
-Output:
-    results/multilabel/crossval/<study_name>/
-        fold_01/
-            best_model.pt
-            fold_metrics.json
-        ...
-        cv_summary.json    — mean ± std across folds
-        cv_summary.csv
 """
 
 from __future__ import annotations
@@ -32,6 +37,7 @@ import copy
 import json
 import logging
 import datetime
+import yaml
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -240,6 +246,9 @@ def _train_cv_fold(
 def command_multilabel_crossval(config: dict, dirs_dict: dict, log=None):
     """
     Run stratified K-fold cross-validation for MIL multi-label classification.
+
+    Results are saved to a unique, timestamped directory:
+        results/multilabel/crossval/<task>/<model>__<feat_label>__<YYYYMMDD_HHMMSS>/
     """
     _log = log or logger
 
@@ -248,23 +257,14 @@ def command_multilabel_crossval(config: dict, dirs_dict: dict, log=None):
 
     cv_cfg     = config.get("multilabel_crossval", {})
     n_folds    = int(cv_cfg.get("n_folds", 5))
-    study_name = cv_cfg.get("study_name", "ml_crossval")
     seed       = int(cv_cfg.get("seed", 42))
     device     = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    mil_name   = config["mil"]["model"]
+    ml_cfg     = config.get("multilabel", {})
+    task_name  = ml_cfg.get("task_name") or config.get("task", {}).get("name", "multilabel")
+    label_names = ml_cfg.get("label_names", [])
 
-    _log.info("=" * 60)
-    _log.info(f"  ML CROSS-VALIDATION: {study_name}")
-    _log.info(f"  Folds    : {n_folds}")
-    _log.info(f"  Model    : {config['mil']['model']}")
-    _log.info(f"  Labels   : {config.get('multilabel', {}).get('label_names', [])}")
-    _log.info(f"  Device   : {device}")
-    if _SKMULTILEARN:
-        _log.info("  Stratification: IterativeStratification (scikit-multilearn)")
-    else:
-        _log.info("  Stratification: StratifiedKFold proxy (install scikit-multilearn for full support)")
-    _log.info("=" * 60)
-
-    # ── Resolve feature dir ───────────────────────────────────────────────────
+    # ── Resolve feature dir ────────────────────────────────────────────────────
     feat_dir = dirs_dict.get("features")
     if not feat_dir:
         _log.error("No feature directory resolved. Pass --features or set config.")
@@ -274,10 +274,52 @@ def command_multilabel_crossval(config: dict, dirs_dict: dict, log=None):
         _log.error(f"Feature pt_files not found: {pt_dir}")
         return
 
-    # ── Load + combine train/val splits ──────────────────────────────────────
-    ml_cfg    = config.get("multilabel", {})
-    task_name = ml_cfg.get("task_name") or config.get("task", {}).get("name", "multilabel")
-    label_names = ml_cfg.get("label_names", [])
+    # ── Build unique run directory ─────────────────────────────────────────────
+    # Encodes: task / model / feature-dir-label / datetime
+    feat_label = os.path.basename(feat_dir.rstrip("/\\"))
+    timestamp  = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_name   = f"{mil_name}__{feat_label}__{timestamp}"
+    cv_root    = os.path.join(
+        config["paths"]["results_dir"],
+        "multilabel", "crossval", task_name, run_name)
+    os.makedirs(cv_root, exist_ok=True)
+
+    _log.info("=" * 60)
+    _log.info(f"  ML CROSS-VALIDATION")
+    _log.info(f"  Task          : {task_name}")
+    _log.info(f"  Model         : {mil_name}")
+    _log.info(f"  Features      : {feat_label}")
+    _log.info(f"  Labels        : {label_names}")
+    _log.info(f"  Folds         : {n_folds}")
+    _log.info(f"  Device        : {device}")
+    _log.info(f"  Run dir       : {cv_root}")
+    if _SKMULTILEARN:
+        _log.info("  Stratification: IterativeStratification (scikit-multilearn)")
+    else:
+        _log.info("  Stratification: StratifiedKFold proxy (install scikit-multilearn for full support)")
+    _log.info("=" * 60)
+
+    # ── Save provenance metadata ───────────────────────────────────────────────
+    exp_info = {
+        "run_name"       : run_name,
+        "task_name"      : task_name,
+        "model"          : mil_name,
+        "n_folds"        : n_folds,
+        "label_names"    : label_names,
+        "feature_dir"    : feat_dir,
+        "feat_label"     : feat_label,
+        "timestamp"      : timestamp,
+        "device"         : str(device),
+        "encoding_size"  : config["mil"].get("encoding_size"),
+        "stratification" : "IterativeStratification" if _SKMULTILEARN else "StratifiedKFold(proxy)",
+        "cv_root"        : cv_root,
+    }
+    with open(os.path.join(cv_root, "experiment_info.json"), "w") as f:
+        json.dump(exp_info, f, indent=2)
+    with open(os.path.join(cv_root, "config_snapshot.yaml"), "w") as f:
+        yaml.dump(config, f, default_flow_style=False)
+
+    # ── Load + combine train/val splits ────────────────────────────────────────
     splits_dir  = os.path.join(config["paths"]["results_dir"],
                                "multilabel", "splits", task_name)
 
@@ -292,10 +334,7 @@ def command_multilabel_crossval(config: dict, dirs_dict: dict, log=None):
             "  Run: python main.py multilabel-split --config ... --csv labels.csv")
         return
 
-    combined_df = pd.concat(dfs, ignore_index=True)
-    cv_root     = os.path.join(config["paths"]["results_dir"],
-                               "multilabel", "crossval", study_name)
-    os.makedirs(cv_root, exist_ok=True)
+    combined_df  = pd.concat(dfs, ignore_index=True)
     combined_csv = os.path.join(cv_root, "combined_pool.csv")
     combined_df.to_csv(combined_csv, index=False)
 
@@ -353,18 +392,22 @@ def command_multilabel_crossval(config: dict, dirs_dict: dict, log=None):
                               for k, v in fold_metrics.items()
                               if isinstance(v, float)))
 
-    # ── Aggregate ─────────────────────────────────────────────────────────────
+    # ── Aggregate ──────────────────────────────────────────────────────────────
     _log.info(f"\n{'='*60}")
     _log.info("  ML CROSS-VALIDATION RESULTS")
 
     metric_keys = [k for k in fold_results[0]
                    if isinstance(fold_results[0][k], float)]
     summary = {
-        "n_folds"   : n_folds,
-        "model"     : config["mil"]["model"],
-        "label_names": label_names,
-        "timestamp" : datetime.datetime.now().isoformat(timespec="seconds"),
+        "run_name"      : run_name,
+        "task_name"     : task_name,
+        "model"         : mil_name,
+        "feat_label"    : feat_label,
+        "n_folds"       : n_folds,
+        "label_names"   : label_names,
+        "timestamp"     : timestamp,
         "stratification": "IterativeStratification" if _SKMULTILEARN else "StratifiedKFold(proxy)",
+        "cv_root"       : cv_root,
     }
     for mk in metric_keys:
         vals = [r[mk] for r in fold_results if mk in r]

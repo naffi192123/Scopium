@@ -1,6 +1,6 @@
 # WSI Framework Architecture
 
-The framework is modular, experiment-friendly, and entirely configurable via a single YAML file.
+The framework is modular, experiment-friendly, and entirely configurable via a single YAML file. It supports two fully isolated classification pipelines sharing one preprocessing stack.
 
 ---
 
@@ -9,37 +9,48 @@ The framework is modular, experiment-friendly, and entirely configurable via a s
 ```text
 wsi_framework/
 ├── config/
-│   └── config.yaml             # Single source of truth for all pipeline parameters
-├── core/                       # Low-level building blocks
-│   ├── wsi_reader.py           # OpenSlide wrapper: metadata, thumbnails, patch reading
-│   ├── segmenter.py            # Tissue detection: HSV masking + Otsu + morphology
-│   └── patcher.py              # Patch coordinate extraction → .h5 files
+│   └── config.yaml              # Single source of truth for all pipeline parameters
+├── core/                        # Low-level building blocks
+│   ├── wsi_reader.py            # OpenSlide wrapper: metadata, thumbnails, patch reading
+│   ├── segmenter.py             # Tissue detection: HSV masking + Otsu + morphology
+│   └── patcher.py               # Patch coordinate extraction → .h5 files
 ├── datasets/
-│   ├── slide_dataset.py        # PyTorch Dataset: streams patches from WSI via HDF5 coords
-│   └── mil_dataset.py          # MIL Bag Dataset: loads .pt feature tensors + labels
+│   ├── slide_dataset.py         # PyTorch Dataset: streams patches from WSI via HDF5 coords
+│   ├── mil_dataset.py           # MIL Bag Dataset: loads .pt feature tensors + labels
+│   └── mil_multilabel_dataset.py# Multi-label MIL Dataset: multi-hot label vectors
 ├── models/
-│   ├── feature_models.py       # Backbone factory: lazy-load RN50, UNI, Virchow, Phikon…
-│   └── mil_models.py           # MIL models: ABMIL, CLAM-SB/MB, TransMIL, DSMIL, pool
-├── pipelines/                  # High-level orchestrators (one per CLI command)
-│   ├── preprocess.py           # segment: tissue segmenter + patcher
-│   ├── extract.py              # extract: GPU feature extraction → .pt + .h5
-│   ├── debug.py                # debug-segmentation, extract-tile: visual QC
-│   ├── analyse_annotations.py  # analyse: annotation CSV validation + class report
-│   ├── split.py                # split: train/val/test CSV generation
-│   ├── train.py                # train: MIL training loop + checkpointing + plots
-│   ├── evaluate.py             # evaluate: metrics, ROC curves, confusion matrix
-│   ├── visualize.py            # heatmap: attention heatmap overlay + top-tile extraction
-│   ├── classify.py             # classify: batched GPU patch inference + features filtering
-│   └── classify_heatmap.py     # classify-heatmap: categorical/confidence prediction heatmaps
+│   ├── feature_models.py        # Backbone factory: lazy-load RN50, UNI, Virchow, Phikon…
+│   ├── mil_models.py            # Single-label MIL: ABMIL, CLAM-SB/MB, TransMIL, DSMIL, pool
+│   ├── mil_multilabel_models.py # Multi-label MIL: sigmoid-head wrappers for all 7 backbones
+│   └── classifier.py            # Patch-level ML classifier (patch classification pipeline)
+├── pipelines/                   # High-level orchestrators (one per CLI command)
+│   ├── preprocess.py            # segment: tissue segmenter + patcher
+│   ├── extract.py               # extract: GPU feature extraction → .pt + .h5
+│   ├── debug.py                 # debug-segmentation, extract-tile: visual QC
+│   ├── analyse_annotations.py   # analyse: annotation CSV validation + class report
+│   ├── split.py                 # split: single-label train/val/test CSV generation
+│   ├── train.py                 # train: MIL training loop + checkpointing + plots
+│   ├── evaluate.py              # evaluate: metrics, ROC curves, confusion matrix
+│   ├── visualize.py             # heatmap: attention heatmap overlay + top-tile extraction
+│   ├── classify.py              # classify: batched GPU patch inference + feature filtering
+│   ├── classify_heatmap.py      # classify-heatmap: categorical/confidence prediction heatmaps
+│   ├── hpo.py                   # hpo: Optuna HPO with isolated timestamped experiments
+│   ├── crossval.py              # crossval: stratified K-fold CV with structured tracking
+│   ├── multilabel_split.py      # multilabel-split: iterative stratified splits
+│   ├── multilabel_train.py      # multilabel-train: BCE/Focal loss, per-label weighting
+│   ├── multilabel_evaluate.py   # multilabel-evaluate: per-label metrics + ROC curves
+│   ├── multilabel_hpo.py        # multilabel-hpo: 19-param Optuna search space
+│   └── multilabel_crossval.py   # multilabel-crossval: iterative stratified K-fold CV
 ├── utils/
-│   ├── config.py               # YAML loader, validator, directory initialiser
-│   ├── transforms.py           # Named transform registry (reinhard, macenko, uni_default…)
-│   ├── logger.py               # Structured rotating file + console logger
-│   └── metrics.py              # AUC, F1, accuracy helpers
+│   ├── config.py                # YAML loader, validator, directory initialiser
+│   ├── transforms.py            # Named transform registry (reinhard, macenko, uni_default…)
+│   ├── logger.py                # Structured rotating file + console logger
+│   ├── metrics.py               # AUC, F1, accuracy helpers
+│   └── multilabel_validator.py  # Multi-label CSV + feature file validator
 ├── docs/
 │   ├── setup_and_usage.md
-│   └── architecture.md         # This file
-├── main.py                     # Unified CLI entry point
+│   └── architecture.md          # This file
+├── main.py                      # Unified CLI entry point (22 commands)
 └── requirements.txt
 ```
 
@@ -47,23 +58,46 @@ wsi_framework/
 
 ## 2. Module Responsibilities
 
+### Core
+
 | Module | Responsibility |
 |---|---|
 | `core/wsi_reader.py` | High-level OpenSlide interface. Multi-resolution reading, metadata extraction, thumbnail generation. |
 | `core/segmenter.py` | Tissue mask generation: HSV colour-space masking, median blur, Otsu threshold, morphological closing. Contour filtering by area. |
 | `core/patcher.py` | Enumerates valid patch positions inside tissue contours. Saves `(x, y)` coordinates and metadata to `.h5`. Optionally filters blank/black patches. |
-| `datasets/slide_dataset.py` | PyTorch `Dataset` wrapping an openslide handle and `.h5` coords. Opened in the **main process** (`num_workers=0`) to avoid Windows pickling errors with ctypes. |
-| `datasets/mil_dataset.py` | `MILBagDataset`: loads pre-extracted `.pt` tensors as bags. `build_mil_datasets()` builds train/val/test splits from CSVs and resolves the correct feature directory via config or override. |
-| `models/feature_models.py` | `load_backbone(model_type)` → `(model, feat_dim, input_size)`. All imports are lazy. `pool_features()` handles model-specific output heads (Phikon, Virchow, Hibou, DSMIL). |
+
+### Datasets
+
+| Module | Responsibility |
+|---|---|
+| `datasets/slide_dataset.py` | PyTorch `Dataset` wrapping an OpenSlide handle and `.h5` coords. Opened in main process (`num_workers=0`) to avoid Windows pickling errors. |
+| `datasets/mil_dataset.py` | `MILBagDataset`: loads pre-extracted `.pt` tensors as bags. Resolves feature directory via config or CLI override. |
+| `datasets/mil_multilabel_dataset.py` | `MultiLabelMILDataset`: auto-detects CSV format (binary columns or string column), outputs multi-hot float tensors. Computes per-label `pos_weight` for imbalance handling. |
+
+### Models
+
+| Module | Responsibility |
+|---|---|
+| `models/feature_models.py` | `load_backbone(model_type)` → `(model, feat_dim, input_size)`. All imports lazy. `pool_features()` handles model-specific output heads. |
 | `models/mil_models.py` | `build_mil_model(config)` factory. Supports `mean_pool`, `max_pool`, `abmil`, `clam_sb`, `clam_mb`, `transmil`, `dsmil`. `has_attention()` gating for heatmap eligibility. |
-| `utils/transforms.py` | Named preprocessing registry. Stain normalisation (reinhard/macenko) uses `ToTensor → ×255 → NormClass()` to match torchstain's expected input range. |
-| `pipelines/preprocess.py` | Sequential/parallel per-slide loop: segment → patch coords → save `.h5`. Writes masks to `masks/{patch_config}/`. |
-| `pipelines/extract.py` | Sequential per-slide GPU loop. Opens slide in main thread, builds DataLoader, runs model, saves `.pt` tensor and `.h5` (features + coords) per slide. |
-| `pipelines/train.py` | MIL training loop: AdamW + ReduceLROnPlateau + early stopping. Saves `best_model.pt`, `final_model.pt`, `train_history.csv`, `config_snapshot.yaml`, and loss/AUC/LR curve PNGs. |
-| `pipelines/evaluate.py` | Loads experiment checkpoint, runs inference on test set, outputs `predictions.csv`, `roc_data.csv`, `confusion_matrix.csv`, `metrics.json`, and `.png` figures. |
-| `pipelines/visualize.py` | Generates per-slide attention heatmaps from stored `.h5` feature+coord files and model attention scores. Extracts top-20 highest-attention tiles. |
-| `pipelines/classify.py` | Patch inference loop: Loads pretrained classifier and `.h5`/`.pt` features, generates per-WSI patch prediction CSVs, and saves filtered features per active category. |
-| `pipelines/classify_heatmap.py` | Prediction visualizer: Reads `classify.py` CSVs and WSI thumbnails to render tile-level categorical maps or class-specific confidence heatmaps. Saves top-K patches. |
+| `models/mil_multilabel_models.py` | Wraps all 7 MIL backbones with a **sigmoid output head** for independent binary predictions per label. `build_multilabel_model(config)` factory. |
+
+### Pipelines
+
+| Module | Responsibility |
+|---|---|
+| `pipelines/preprocess.py` | Sequential/parallel per-slide loop: segment → patch coords → `.h5`. |
+| `pipelines/extract.py` | Per-slide GPU feature extraction. Saves `.pt` tensor and `.h5` (features + coords). |
+| `pipelines/train.py` | Single-label MIL training: AdamW + ReduceLROnPlateau + early stopping. Saves `best_model.pt`, `final_model.pt`, `train_history.csv`, `config_snapshot.yaml`, curve PNGs. |
+| `pipelines/evaluate.py` | Loads single-label checkpoint, runs inference on test set, outputs full evaluation artifacts. |
+| `pipelines/visualize.py` | Per-slide attention heatmaps from `.h5` feature+coord files. Extracts top-20 highest-attention tiles. |
+| `pipelines/hpo.py` | Optuna-based HPO with MedianPruner. Creates an **isolated, timestamped experiment directory** per run encoding features + timestamp. Saves `best_config.yaml` + SQLite study DB. |
+| `pipelines/crossval.py` | Stratified K-fold CV. Saves to `results/crossval/<task>/<model>__<feat>__<YYYYMMDD_HHMMSS>/`. Includes `experiment_info.json` and `config_snapshot.yaml`. |
+| `pipelines/multilabel_split.py` | Multi-label CSV splitting with iterative stratification (skmultilearn) or random fallback. |
+| `pipelines/multilabel_train.py` | Multi-label training with BCEWithLogitsLoss / FocalLoss, per-label positive weighting, sigmoid threshold. |
+| `pipelines/multilabel_evaluate.py` | Per-label + aggregate metrics (macro/micro AUC, F1, Hamming loss, subset accuracy). Per-label ROC curves. |
+| `pipelines/multilabel_hpo.py` | Optuna HPO with 19-parameter search space. Isolated timestamped experiments in `results/multilabel/hpo/`. |
+| `pipelines/multilabel_crossval.py` | Multi-label K-fold CV using iterative stratification. Same structured tracking as single-label CV. |
 
 ---
 
@@ -78,119 +112,137 @@ graph TD
     D --> E["thumbnails/ + metadata/"]
 
     B --> F["main.py segment"]
-    F --> G["segmenter.py"]
-    G --> H["masks/{patch_cfg}/*.png"]
-    H --> I["patcher.py"]
-    I --> J["patches/{patch_cfg}/*.h5"]
+    F --> G["segmenter.py + patcher.py"]
+    G --> J["patches/{patch_cfg}/*.h5"]
 
     B --> K["main.py extract"]
     J --> K
-    K --> L["slide_dataset.py + transforms.py"]
-    L --> M["feature_models.py (GPU)"]
-    M --> N["features/{patch_cfg}__{model}/pt_files/*.pt"]
-    M --> O["features/{patch_cfg}__{model}/h5_files/*.h5"]
+    K --> L["feature_models.py (GPU)"]
+    L --> N["features/{patch_cfg}__{model}/pt_files/*.pt"]
+    L --> O["features/{patch_cfg}__{model}/h5_files/*.h5"]
 
-    B --> P["main.py split"]
-    P --> Q["results/splits/{task}/train+val+test.csv"]
+    subgraph Single-Label Pipeline
+        B --> P["main.py split"]
+        P --> Q["results/splits/{task}/train+val+test.csv"]
+        Q --> R["main.py train"]
+        N --> R
+        R --> T["experiments/{task}/{model}_{ts}/best_model.pt"]
+        T --> U["main.py evaluate"]
+        T --> V["main.py heatmap"]
+        O --> V
+        N --> HP["main.py hpo  →  results/hpo/{run}/best_config.yaml"]
+        N --> CV["main.py crossval  →  results/crossval/{task}/{model}__{feat}__{ts}/"]
+    end
 
-    Q --> R["main.py train"]
-    N --> R
-    R --> S["mil_models.py"]
-    S --> T["experiments/{task}/{model}_{stamp}/best_model.pt"]
-
-    T --> U["main.py evaluate"]
-    T --> V["main.py heatmap"]
-    O --> V
-    V --> W["heatmaps/{slide}/*.png + top20_tiles/"]
+    subgraph Multi-Label Pipeline
+        B --> MS["main.py multilabel-split"]
+        MS --> MQ["results/multilabel/splits/{task}/train+val+test.csv"]
+        MQ --> MT["main.py multilabel-train"]
+        N --> MT
+        MT --> ME["results/multilabel/experiments/{task}/{model}_{ts}/"]
+        ME --> MEV["main.py multilabel-evaluate"]
+        N --> MHP["main.py multilabel-hpo  →  results/multilabel/hpo/{run}/"]
+        N --> MCV["main.py multilabel-crossval  →  results/multilabel/crossval/{task}/{model}__{feat}__{ts}/"]
+    end
 ```
 
 ---
 
-## 4. CLI Command Reference
+## 4. Cross-Validation Tracking
 
-| Command | Description |
+Both CV pipelines produce a **uniquely named run directory** per invocation, encoding four dimensions:
+
+| Dimension | Example |
 |---|---|
-| `python main.py stats` | Dataset scan → `results/dataset_stats.csv` |
-| `python main.py process` | Thumbnails + JSON metadata per slide |
-| `python main.py segment` | Tissue segmentation + patch coordinate `.h5` files |
-| `python main.py debug-segmentation` | Tile overlay on WSI thumbnail |
-| `python main.py extract-tile` | Single high-res tile extraction for visual QC |
-| `python main.py extract` | GPU feature extraction → `.pt` + `.h5` per slide |
-| `python main.py analyse` | Annotation CSV validation + class distribution report |
-| `python main.py split` | Train/val/test CSV split generation |
-| `python main.py train` | MIL model training with history + checkpointing |
-| `python main.py evaluate` | Evaluation metrics, ROC curves, confusion matrix |
-| `python main.py heatmap` | Attention heatmap overlay + top-20 tile extraction |
+| Task type | `metastasis` / `multilabel_task` |
+| Model | `abmil` / `clam_sb` |
+| Feature folder | `patch512_step512_level0__optimus__TUM` |
+| Date + time | `20260401_103245` |
 
-### Key CLI flags (all commands)
+**Resulting directory name:**
+```
+abmil__patch512_step512_level0__optimus__TUM__20260401_103245/
+```
 
-| Flag | Commands | Effect |
-|---|---|---|
-| `--config PATH` | all | Path to YAML config (default: `config/config.yaml`) |
-| `--patches SUBFOLDER` | `segment`, `extract` | Override patch subfolder (highest priority) |
-| `--features SUBFOLDER` | `extract`, `train`, `evaluate`, `heatmap` | Override feature base subfolder (model always appended) |
-| `--experiment PATH` | `evaluate`, `heatmap` | Path to experiment dir (auto-detects latest if omitted) |
-| `--csv PATH` | `analyse`, `split` | Path to annotation CSV |
+Each run directory contains:
+
+| File | Contents |
+|---|---|
+| `experiment_info.json` | Task, model, features, labels, n_folds, device, timestamp, full paths |
+| `config_snapshot.yaml` | Exact `config.yaml` used for this run |
+| `combined_pool.csv` | Merged train+val pool used to form folds |
+| `fold_01/.../fold_N/` | Per-fold checkpoint + metrics JSON |
+| `cv_summary.json` | Mean ± std across all folds |
+| `cv_summary.csv` | Per-fold metrics in tabular form |
 
 ---
 
 ## 5. Results Directory Structure
 
-All outputs are routed under `results/`, with directory names encoding pipeline parameters to prevent accidental overwrites across different experiments.
-
 ```text
 results/
-├── dataset_stats.csv                   # Slide inventory
-├── thumbnails/                         # WSI thumbnail PNGs
-├── metadata/                           # Slide metadata JSONs
-├── masks/
-│   └── patch512_step512_level0/        # Masks mirror the patch config subfolder
-│       └── <slide>_mask.png
-├── patches/
-│   └── patch512_step512_level0/        # Folder = patch_size + step_size + pyramid_level
-│       └── <slide>.h5                  # coords (N,2) + patch_level + patch_size attrs
+├── dataset_stats.csv
+├── thumbnails/
+├── metadata/
+├── masks/patch512_step512_level0/
+├── patches/patch512_step512_level0/
 ├── features/
-│   └── patch512_step512_level0__rn50/  # Folder = patch_config + __ + model_name
+│   └── patch512_step512_level0__optimus__TUM/
 │       ├── pt_files/
-│       │   └── <slide>.pt              # FloatTensor (N, D)
 │       └── h5_files/
-│           └── <slide>.h5              # HDF5: 'features' (N,D) + 'coords' (N,2)
-├── splits/
-│   └── <task_name>/
-│       ├── train.csv
-│       ├── val.csv
-│       ├── test.csv
-│       └── split_summary.txt
-├── experiments/
-│   └── <task_name>/
-│       └── <model>_<timestamp>/
-│           ├── best_model.pt           # weights + optimizer + config + class_map + metrics
-│           ├── final_model.pt
-│           ├── train_history.csv       # loss, acc, auc, f1, lr, time per epoch
-│           ├── config_snapshot.yaml    # exact YAML used for this run
-│           ├── plots/
-│           │   ├── train_loss_curve.png
-│           │   ├── val_auc_curve.png
-│           │   ├── val_acc_curve.png
-│           │   └── learning_rate.png
-│           ├── evaluate/
-│           │   ├── predictions.csv
-│           │   ├── roc_data.csv
-│           │   ├── confusion_matrix.csv
-│           │   ├── classification_report.txt
-│           │   ├── metrics.json
-│           │   ├── roc_curve.png
-│           │   └── confusion_matrix.png
-│           └── heatmaps/<slide_id>/
-│               ├── <slide>_heatmap.png
-│               ├── <slide>_attention_scores.csv
-│               └── top20_tiles/
-│                   └── 01_<slide>_x..._y..._a....png
-├── debug/                              # Debug tile + segmentation overlay images
-└── wsi_framework.log                   # Rotating log file (10 MB max)
+│
+├── splits/{task_name}/           ← single-label splits
+├── experiments/{task_name}/
+│   └── {model}_{timestamp}/
+│       ├── best_model.pt
+│       ├── final_model.pt
+│       ├── train_history.csv
+│       ├── config_snapshot.yaml
+│       ├── plots/
+│       ├── evaluate/
+│       └── heatmaps/{slide_id}/
+│
+├── hpo/
+│   └── mil_hpo__{feat}__{YYYYMMDD_HHMMSS}/
+│       ├── experiment_info.json
+│       ├── base_config.yaml
+│       ├── trial_NNNN/
+│       ├── best_config.yaml
+│       ├── best_trial.json
+│       ├── hpo_results.csv
+│       └── study.db
+│
+├── crossval/                     ← single-label CV
+│   └── {task_name}/
+│       └── {model}__{feat}__{YYYYMMDD_HHMMSS}/
+│           ├── experiment_info.json
+│           ├── config_snapshot.yaml
+│           ├── combined_pool.csv
+│           ├── fold_01/
+│           │   ├── best_model.pt
+│           │   └── fold_metrics.json
+│           ├── cv_summary.json
+│           └── cv_summary.csv
+│
+└── multilabel/
+    ├── splits/{task_name}/       ← multi-label splits
+    ├── experiments/{task_name}/  ← multi-label training runs
+    ├── hpo/                      ← multi-label HPO runs
+    │   └── ml_hpo__{feat}__{YYYYMMDD_HHMMSS}/
+    └── crossval/                 ← multi-label CV
+        └── {task_name}/
+            └── {model}__{feat}__{YYYYMMDD_HHMMSS}/
+                ├── experiment_info.json
+                ├── config_snapshot.yaml
+                ├── combined_pool.csv
+                ├── fold_01/
+                │   ├── best_model.pt
+                │   └── fold_metrics.json
+                ├── cv_summary.json
+                └── cv_summary.csv
 ```
 
-> **Key guarantee:** swapping `model: rn50` → `model: uni` in `config.yaml` generates a completely separate `features/` subdirectory with no risk of overwriting existing embeddings. Similarly, changing `patch_size` or `step_size` creates a new `patches/` and `masks/` subdirectory.
+> **Key guarantee:** every pipeline stage writes to a directory whose name encodes its key parameters. Changing model, feature extractor, or feature directory always produces a new, isolated run — previous runs are never overwritten.
 
 ---
 
@@ -201,13 +253,15 @@ results/
 | Stage | Auto-derived subfolder name |
 |---|---|
 | `segment` (patches) | `patch{size}_step{step}_level{lvl}` |
-| `segment` (masks) | `patch{size}_step{step}_level{lvl}` (same as patches) |
+| `segment` (masks) | `patch{size}_step{step}_level{lvl}` (mirrors patches) |
 | `extract` (features) | `patch{size}_step{step}_level{lvl}__{model}` |
+| `crossval` / `multilabel-crossval` | `{model}__{feat_dir}__{YYYYMMDD_HHMMSS}` |
+| `hpo` / `multilabel-hpo` | `{study_name}__{feat_dir}__{YYYYMMDD_HHMMSS}` |
 
 ### Override Priority (highest → lowest)
 
-1. **CLI flag** (`--patches` / `--features`)
+1. **CLI flag** (`--patches` / `--features` / `--feature_dir`)
 2. **YAML key** (`tiling.patches_subfolder_override` / `feature_extraction.features_subfolder_override`)
 3. **Auto-derived** name from config parameters
 
-> For features: the override sets the **base name only**. The model key (e.g. `__rn50`) is **always** appended automatically, ensuring each `(base_name, model)` combination has its own directory.
+> For `--features`: the value is used as an **exact** subfolder name — the model key is **not** appended. This is the recommended way to select a previously extracted feature set.
