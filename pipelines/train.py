@@ -282,7 +282,9 @@ def command_train(config: dict, dirs_dict: dict, log=None):
     _log.info(f"Training device: {device}")
 
     # ── Datasets ───────────────────────────────────────────────────────────────
-    datasets, class_names = build_mil_datasets(config, dirs_dict)
+    datasets, class_names = build_mil_datasets(
+        config, dirs_dict,
+        max_patches=int(train_cfg.get('max_patches')) if train_cfg.get('max_patches') else None)
     if 'train' not in datasets:
         _log.error("No train.csv split found. Run: python main.py split --config ...")
         return
@@ -326,10 +328,11 @@ def command_train(config: dict, dirs_dict: dict, log=None):
     _log.info(f"Model: {mil_name} | Params: {n_params:,} | Classes: {n_classes}")
 
     # ── Optimiser & scheduler ──────────────────────────────────────────────────
-    lr            = float(train_cfg.get('learning_rate',   2e-4))
-    wd            = float(train_cfg.get('weight_decay',    1e-4))
-    b1            = float(train_cfg.get('beta1',           0.9))
-    b2            = float(train_cfg.get('beta2',           0.999))
+    lr            = float(train_cfg.get('learning_rate',       2e-3))
+    wd            = float(train_cfg.get('weight_decay',        1e-3))
+    b1            = float(train_cfg.get('beta1',               0.75))
+    b2            = float(train_cfg.get('beta2',               0.95))
+    eps           = float(train_cfg.get('eps',                 1e-2))
     opt_name      = train_cfg.get('optimizer', 'AdamW')
     warmup_ep     = int(train_cfg.get('warmup_epochs', 0))
     sched_name    = train_cfg.get('lr_scheduler', 'plateau')
@@ -341,10 +344,10 @@ def command_train(config: dict, dirs_dict: dict, log=None):
 
     if opt_name == 'Adam':
         optimizer = torch.optim.Adam(
-            model.parameters(), lr=lr, weight_decay=wd, betas=(b1, b2))
+            model.parameters(), lr=lr, weight_decay=wd, betas=(b1, b2), eps=eps)
     else:  # AdamW (default)
         optimizer = torch.optim.AdamW(
-            model.parameters(), lr=lr, weight_decay=wd, betas=(b1, b2))
+            model.parameters(), lr=lr, weight_decay=wd, betas=(b1, b2), eps=eps)
 
     if sched_name == 'cosine':
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -355,8 +358,8 @@ def command_train(config: dict, dirs_dict: dict, log=None):
     else:  # plateau (default)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, 'min',
-            factor   = float(train_cfg.get('lr_scheduler_factor', 0.5)),
-            patience = int(train_cfg.get('lr_scheduler_patience', 10)))
+            factor   = float(train_cfg.get('lr_scheduler_factor',  0.75)),
+            patience = int(train_cfg.get('lr_scheduler_patience', 20)))
 
     loss_fn = _build_loss_fn(config, class_names, device)
 

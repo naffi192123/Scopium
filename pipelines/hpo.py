@@ -103,19 +103,20 @@ def _seed(seed: int = 42):
 
 def _build_optimizer(trial_cfg: dict, model: nn.Module):
     """Build optimizer from trial config."""
-    train_cfg  = trial_cfg.get('training', {})
+    train_cfg      = trial_cfg.get('training', {})
     optimizer_name = train_cfg.get('optimizer', 'AdamW')
-    lr  = float(train_cfg.get('learning_rate', 2e-4))
-    wd  = float(train_cfg.get('weight_decay', 1e-4))
-    b1  = float(train_cfg.get('beta1', 0.9))
-    b2  = float(train_cfg.get('beta2', 0.999))
+    lr  = float(train_cfg.get('learning_rate', 2e-3))
+    wd  = float(train_cfg.get('weight_decay', 1e-3))
+    b1  = float(train_cfg.get('beta1', 0.75))
+    b2  = float(train_cfg.get('beta2', 0.95))
+    eps = float(train_cfg.get('eps',   1e-2))
 
     if optimizer_name == 'AdamW':
         return torch.optim.AdamW(model.parameters(), lr=lr,
-                                 weight_decay=wd, betas=(b1, b2))
+                                 weight_decay=wd, betas=(b1, b2), eps=eps)
     else:
         return torch.optim.Adam(model.parameters(), lr=lr,
-                                weight_decay=wd, betas=(b1, b2))
+                                weight_decay=wd, betas=(b1, b2), eps=eps)
 
 
 def _build_scheduler(trial_cfg: dict, optimizer, n_epochs: int):
@@ -132,8 +133,8 @@ def _build_scheduler(trial_cfg: dict, optimizer, n_epochs: int):
     else:  # plateau (default)
         return torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, 'min',
-            factor   = float(train_cfg.get('lr_scheduler_factor', 0.5)),
-            patience = int(train_cfg.get('lr_scheduler_patience', 5)))
+            factor   = float(train_cfg.get('lr_scheduler_factor',  0.75)),
+            patience = int(train_cfg.get('lr_scheduler_patience', 20)))
 
 
 def _warmup_lr(optimizer, epoch: int, warmup_epochs: int, base_lr: float):
@@ -253,19 +254,24 @@ def _suggest_hyperparams(trial, hpo_cfg: dict, base_config: dict) -> dict:
     model_key      = _cat('model', 'abmil')
     optimizer_name = _cat('optimizer', 'AdamW')
     lr             = _loguni('learning_rate', 1e-4, 2e-3)
-    wd             = _loguni('weight_decay', 1e-5, 5e-4)
+    wd             = _loguni('weight_decay', 1e-5, 5e-3)
+    b1             = _uni('beta1', 0.5, 0.99)
+    b2             = _uni('beta2', 0.9, 0.999)
+    eps            = _loguni('eps', 1e-8, 1e-2)
     dropout        = _uni('dropout', 0.1, 0.6)
-    dropout_attn   = _uni('dropout_attn', 0.2, 0.4)
-    dropout_clf    = _uni('dropout_classifier', 0.1, 0.3)
+    dropout_attn   = _uni('dropout_attn', 0.2, 0.5)
+    dropout_clf    = _uni('dropout_classifier', 0.1, 0.4)
     hidden_dim     = _cat('attn_hidden_dim', 256)
     proj_dim       = _cat('feature_proj_dim', 512)
     scheduler_name = _cat('lr_scheduler', 'plateau')
+    lr_factor      = _uni('lr_factor', 0.1, 0.9)
+    lr_patience    = _cat('lr_patience', 20)
     label_smoothing = _uni('label_smoothing', 0.0, 0.15)
-    es_patience    = _cat('early_stop_patience', 15)
+    es_patience    = _cat('early_stop_patience', 20)
     warmup_epochs  = _cat('warmup_epochs', 0)
     patch_dropout  = _uni('patch_dropout', 0.0, 0.3)
     patch_shuffle  = True   # always on (no meaningful trade-off to tune)
-    max_patches    = _cat('max_patches', None)
+    max_patches    = _cat('max_patches', 800)   # A_patches: [600,700,800,900,1000,1100,1200]
 
     return {
         'mil': {
@@ -280,7 +286,12 @@ def _suggest_hyperparams(trial, hpo_cfg: dict, base_config: dict) -> dict:
             'optimizer':               optimizer_name,
             'learning_rate':           lr,
             'weight_decay':            wd,
+            'beta1':                   b1,
+            'beta2':                   b2,
+            'eps':                     eps,
             'lr_scheduler':            scheduler_name,
+            'lr_scheduler_factor':     lr_factor,
+            'lr_scheduler_patience':   lr_patience,
             'label_smoothing':         label_smoothing,
             'early_stopping_patience': es_patience,
             'warmup_epochs':           warmup_epochs,

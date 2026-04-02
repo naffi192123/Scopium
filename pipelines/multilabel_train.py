@@ -392,10 +392,11 @@ def command_multilabel_train(config: dict, dirs_dict: dict, log=None):
     _log.info(f"  Labels  : {n_labels} — {label_names}")
 
     # ── Optimiser & Scheduler ──────────────────────────────────────────────────
-    lr         = float(train_cfg.get("learning_rate", 2e-4))
-    wd         = float(train_cfg.get("weight_decay", 1e-4))
-    b1         = float(config.get("training", {}).get("beta1", 0.9))
-    b2         = float(config.get("training", {}).get("beta2", 0.999))
+    lr         = float(train_cfg.get("learning_rate", 2e-3))
+    wd         = float(train_cfg.get("weight_decay", 1e-3))
+    b1         = float(train_cfg.get("beta1", 0.75))
+    b2         = float(train_cfg.get("beta2", 0.95))
+    eps        = float(train_cfg.get("eps",   1e-2))
     opt_name   = train_cfg.get("optimizer", "AdamW")
     sched_name = train_cfg.get("lr_scheduler", "plateau")
     warmup_ep  = int(train_cfg.get("warmup_epochs", 0))
@@ -406,10 +407,10 @@ def command_multilabel_train(config: dict, dirs_dict: dict, log=None):
 
     if opt_name == "Adam":
         optimizer = torch.optim.Adam(
-            model.parameters(), lr=lr, weight_decay=wd, betas=(b1, b2))
+            model.parameters(), lr=lr, weight_decay=wd, betas=(b1, b2), eps=eps)
     else:
         optimizer = torch.optim.AdamW(
-            model.parameters(), lr=lr, weight_decay=wd, betas=(b1, b2))
+            model.parameters(), lr=lr, weight_decay=wd, betas=(b1, b2), eps=eps)
 
     if sched_name == "cosine":
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -419,7 +420,9 @@ def command_multilabel_train(config: dict, dirs_dict: dict, log=None):
             optimizer, step_size=max(1, max_ep // 3), gamma=0.3)
     else:
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, "min", factor=0.5, patience=10)
+            optimizer, "min",
+            factor   = float(train_cfg.get("lr_scheduler_factor",  0.75)),
+            patience = int(train_cfg.get("lr_scheduler_patience", 20)))
 
     loss_fn = _build_multilabel_loss(config, datasets.get("train"), device)
 

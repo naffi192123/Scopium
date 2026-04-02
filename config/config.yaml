@@ -149,11 +149,16 @@ mil:
   # rn50=2048, rn18=512, uni/vit_l=1024, optimus/gigapath=1536, hibou_b/phikon=768
   encoding_size: 1536
 
+  # Internal projection dimension (attention, bag clf, instance clf layers).
+  # Tunable independently of encoding_size. Mapped from HPO's feature_proj_dim.
+  proj_dim: 512
+
   # Attention network hidden dimension
   hidden_dim: 256
 
-  # Dropout probability (0 = disabled)
-  dropout: 0.25
+  # Dropout probability applied to projection and bag-classification layers.
+  # Default: 0.4 (recommended for overfitting mitigation)
+  dropout: 0.4
 
   # CLAM: number of top/bottom patches for instance clustering
   k_sample: 8
@@ -163,17 +168,41 @@ mil:
 
 training:
   max_epochs: 100
-  learning_rate: 0.0002
-  weight_decay: 0.0001
-  # Adam betas
-  beta1: 0.9
-  beta2: 0.999
 
-  # LR scheduler (ReduceLROnPlateau)
-  lr_scheduler_factor: 0.5
-  lr_scheduler_patience: 10
+  # ── Optimizer ────────────────────────────────────────────────────────────────
+  # Optimizer: Adam | AdamW
+  optimizer: AdamW
 
-  # Early stopping
+  # Learning rate for the optimizer.
+  # Default: 2e-3 (per reference implementation)
+  learning_rate: 2.0e-3
+
+  # L2 regularization / weight decay to prevent overfitting.
+  # Default: 1e-3 (reg in reference implementation)
+  weight_decay: 1.0e-3
+
+  # Adam β₁ — first moment decay rate. Default: 0.75
+  beta1: 0.75
+
+  # Adam β₂ — second moment decay rate. Default: 0.95
+  beta2: 0.95
+
+  # Adam ε — numerical stability constant. Default: 1e-2
+  eps: 1.0e-2
+
+  # ── LR Scheduler ─────────────────────────────────────────────────────────────
+  # LR scheduler: plateau | cosine | step
+  lr_scheduler: plateau
+
+  # Multiplicative decay factor applied when plateau is detected.
+  # Default: 0.75 (lr_factor in reference implementation)
+  lr_scheduler_factor: 0.75
+
+  # Number of epochs with no improvement before LR is reduced.
+  # Default: 20 (lr_patience in reference implementation)
+  lr_scheduler_patience: 20
+
+  # ── Early stopping ───────────────────────────────────────────────────────────
   early_stopping: true
   early_stopping_patience: 20
   early_stopping_min_epochs: 10
@@ -184,13 +213,7 @@ training:
   # DataLoader
   num_workers: 0
 
-  # ── Overfitting mitigation ──────────────────────────────────────────────────
-  # Optimizer: Adam | AdamW
-  optimizer: AdamW
-
-  # LR scheduler: plateau | cosine | step
-  lr_scheduler: plateau
-
+  # ── Overfitting mitigation ───────────────────────────────────────────────────
   # Cross-entropy label smoothing [0.0 = disabled]
   label_smoothing: 0.0
 
@@ -203,8 +226,9 @@ training:
   # Randomly shuffle patch order each step (breaks sequence bias)
   patch_shuffle: false
 
-  # Cap bag size to N patches (null = use all patches)
-  max_patches: null
+  # Maximum patches to load per slide (A_patches). null = use all patches.
+  # Default: 800 (A_patches in reference implementation)
+  max_patches: 800
 
 experiment:
   # Sub-folder inside results/ for specific sweeping experiments
@@ -228,19 +252,24 @@ hpo:
     # model:               [abmil, clam_sb, clam_mb, mean_pool, transmil, dsmil]
     model:               [abmil]
     optimizer:           [AdamW, Adam]
-    learning_rate:       [1.0e-4, 2.0e-3]   # log-uniform
-    weight_decay:        [1.0e-5, 5.0e-4]   # log-uniform
-    dropout:             [0.1, 0.6]          # uniform
-    dropout_attn:        [0.2, 0.4]          # uniform
-    dropout_classifier:  [0.1, 0.3]          # uniform
-    attn_hidden_dim:     [32, 64, 128]       # categorical
-    feature_proj_dim:    [256, 512]          # categorical
+    learning_rate:       [1.0e-4, 2.0e-3]     # log-uniform
+    weight_decay:        [1.0e-5, 5.0e-3]     # log-uniform  (reg: up to 5e-3)
+    beta1:               [0.5, 0.99]           # uniform (Adam β₁)
+    beta2:               [0.9, 0.999]          # uniform (Adam β₂)
+    eps:                 [1.0e-8, 1.0e-2]      # log-uniform (Adam ε)
+    dropout:             [0.1, 0.6]            # uniform
+    dropout_attn:        [0.2, 0.5]            # uniform
+    dropout_classifier:  [0.1, 0.4]            # uniform
+    attn_hidden_dim:     [32, 64, 128, 256]    # categorical
+    feature_proj_dim:    [256, 512]            # categorical
     lr_scheduler:        [cosine, step, plateau]  # categorical
-    label_smoothing:     [0.0, 0.15]         # uniform
-    early_stop_patience: [10, 15]            # categorical
-    warmup_epochs:       [0, 2, 5]           # categorical
+    lr_factor:           [0.1, 0.9]            # uniform (plateau decay factor)
+    lr_patience:         [5, 10, 20]           # categorical (plateau patience)
+    label_smoothing:     [0.0, 0.15]           # uniform
+    early_stop_patience: [10, 15, 20]          # categorical
+    warmup_epochs:       [0, 2, 5]             # categorical
     patch_dropout:       [0.0, 0.3]          # uniform
-    max_patches:         [null, 1000, 2000]  # categorical bag-size cap
+    max_patches:         [800]  # A_patches search space [null, 600, 700, 800, 900, 1000, 1100, 1200]
 
 # ─── Patch-Level Classifier ───────────────────────────────────────────────────
 # Used by: python main.py classify --config config/config.yaml
@@ -353,15 +382,38 @@ multilabel:
 # Used by: python main.py multilabel-train --config config/config.yaml
 multilabel_training:
   max_epochs: 100
-  learning_rate: 2.0e-4
-  weight_decay: 1.0e-4
-  optimizer: AdamW           # Adam | AdamW
-  lr_scheduler: plateau      # plateau | cosine | step
+
+  # ── Optimizer ────────────────────────────────────────────────────────────────
+  optimizer: AdamW             # Adam | AdamW
+
+  # Learning rate. Default: 2e-3
+  learning_rate: 2.0e-3
+
+  # L2 regularization / weight decay. Default: 1e-3
+  weight_decay: 1.0e-3
+
+  # Adam β₁ — first moment decay rate. Default: 0.75
+  beta1: 0.75
+
+  # Adam β₂ — second moment decay rate. Default: 0.95
+  beta2: 0.95
+
+  # Adam ε — numerical stability constant. Default: 1e-2
+  eps: 1.0e-2
+
+  # ── LR Scheduler ─────────────────────────────────────────────────────────────
+  lr_scheduler: plateau        # plateau | cosine | step
+
+  # Plateau decay factor. Default: 0.75
+  lr_scheduler_factor: 0.75
+
+  # Plateau patience (epochs). Default: 20
+  lr_scheduler_patience: 20
 
   # LR warmup (linear ramp over first N epochs)
   warmup_epochs: 0
 
-  # Early stopping
+  # ── Early stopping ───────────────────────────────────────────────────────────
   early_stopping: true
   early_stopping_patience: 20
   early_stopping_min_epochs: 10
@@ -386,12 +438,15 @@ multilabel_training:
   # Options: macro_auc | micro_auc | macro_f1 | micro_f1 | subset_acc
   monitor_metric: macro_auc
 
-  # Patch-level regularisation
-  patch_dropout: 0.0          # fraction of patches to drop randomly each step
-  patch_shuffle: false        # shuffle patch order each step
-  max_patches: null           # cap bag size (null = use all patches)
+  # ── Bag-level regularisation ─────────────────────────────────────────────────
+  # Dropout fraction of patches per step (patch_dropout)
+  patch_dropout: 0.0
+  # Shuffle patch order each step
+  patch_shuffle: false
+  # Maximum patches per slide (A_patches). Default: 800
+  max_patches: 800
 
-  # DataLoader workers (inherit from training.num_workers if not set)
+  # DataLoader workers (inherits from training.num_workers if not set)
   # num_workers: 0
 
 
@@ -417,19 +472,24 @@ multilabel_hpo:
     model:               [abmil, clam_sb, clam_mb, mean_pool, transmil, dsmil]
     optimizer:           [AdamW, Adam]
     learning_rate:       [1.0e-4, 2.0e-3]
-    weight_decay:        [1.0e-5, 5.0e-4]
+    weight_decay:        [1.0e-5, 5.0e-3]
+    beta1:               [0.5, 0.99]
+    beta2:               [0.9, 0.999]
+    eps:                 [1.0e-8, 1.0e-2]
     dropout:             [0.1, 0.6]
-    dropout_attn:        [0.2, 0.4]
-    dropout_classifier:  [0.1, 0.3]
-    attn_hidden_dim:     [32, 64, 128]
+    dropout_attn:        [0.2, 0.5]
+    dropout_classifier:  [0.1, 0.4]
+    attn_hidden_dim:     [32, 64, 128, 256]
     feature_proj_dim:    [256, 512]
     lr_scheduler:        [cosine, step, plateau]
+    lr_factor:           [0.1, 0.9]
+    lr_patience:         [5, 10, 20]
     label_smoothing:     [0.0, 0.15]
-    early_stop_patience: [10, 15]
+    early_stop_patience: [10, 15, 20]
     warmup_epochs:       [0, 2, 5]
     patch_dropout:       [0.0, 0.3]
-    patch_shuffle:       [true]
-    max_patches:         [null, 1000, 2000]
+    patch_shuffle:       [true, false]
+    max_patches:         [600, 700, 800, 900, 1000, 1100, 1200]  # A_patches search space
     loss:                [bce, focal]
     focal_gamma:         [1.0, 3.0]
     threshold:           [0.3, 0.7]

@@ -10,27 +10,30 @@ A modular, YAML-configurable framework for Whole Slide Image (WSI) analysis — 
 conda activate dl_py39
 cd wsi_framework
 
-# ── Shared preprocessing ────────────────────────────────────────────
-python main.py stats    --config config/config.yaml   # scan dataset
-python main.py process  --config config/config.yaml   # thumbnails + metadata
-python main.py segment  --config config/config.yaml   # tissue segmentation + patches
-python main.py extract  --config config/config.yaml   # GPU feature extraction → .pt files
+# ── Shared preprocessing ─────────────────────────────────────────────────────
+python main.py stats    --config config/config.yaml
+python main.py process  --config config/config.yaml
+python main.py segment  --config config/config.yaml
+python main.py extract  --config config/config.yaml
 
-# ── Single-label classification ─────────────────────────────────────
+# ── Single-label pipeline ─────────────────────────────────────────────────────
 python main.py analyse  --config config/config.yaml
 python main.py split    --config config/config.yaml
 python main.py train    --config config/config.yaml
 python main.py evaluate --config config/config.yaml
 python main.py heatmap  --config config/config.yaml
 
-# ── Hyperparameter optimisation ─────────────────────────────────────
-python main.py hpo      --config config/config.yaml
-python main.py train    --config config/config.yaml --use_best_config
+# ── HPO ──────────────────────────────────────────────────────────────────────
+python main.py hpo    --config config/config.yaml
+python main.py hpo    --config config/config.yaml --features patch512_step512_level0__optimus__TUM
+python main.py train  --config config/config.yaml --use_best_config
 
-# ── Cross-validation ────────────────────────────────────────────────
+# ── Cross-validation ─────────────────────────────────────────────────────────
 python main.py crossval --config config/config.yaml
+python main.py crossval --config config/config.yaml --use_best_config
+python main.py crossval --config config/config.yaml --features patch512_step512_level0__optimus__TUM
 
-# ── Multi-label classification ──────────────────────────────────────
+# ── Multi-label pipeline ──────────────────────────────────────────────────────
 python main.py multilabel-split    --config config/config.yaml --csv dataset/annotations/labels.csv
 python main.py multilabel-train    --config config/config.yaml
 python main.py multilabel-evaluate --config config/config.yaml
@@ -64,7 +67,7 @@ python main.py multilabel-crossval --config config/config.yaml
 | `heatmap` | Attention heatmap overlay + top-20 tile extraction |
 | `classify` | Patch-level classifier inference → CSV + filtered features |
 | `classify-heatmap` | Tile-level prediction heatmaps |
-| `hpo` | Optuna HPO study — searches model arch, LR, regularisation |
+| `hpo` | Optuna HPO — 22-parameter search space |
 | `crossval` | Stratified K-fold cross-validation |
 
 ### Multi-Label Pipeline
@@ -75,14 +78,14 @@ python main.py multilabel-crossval --config config/config.yaml
 | `multilabel-split` | Train/val/test split with iterative stratification |
 | `multilabel-train` | Multi-label MIL training (BCE / Focal loss) |
 | `multilabel-evaluate` | Per-label metrics, ROC curves, Hamming loss |
-| `multilabel-hpo` | Optuna HPO with 19-parameter search space |
+| `multilabel-hpo` | Optuna HPO with 25-parameter search space |
 | `multilabel-crossval` | K-fold CV with iterative stratification |
 
 ### Key CLI Flags
 
 | Flag | Applies to | Description |
 |---|---|---|
-| `--features <dir>` | all MIL commands | **Exact** feature directory (model suffix not appended) |
+| `--features <dir>` | all MIL commands | Exact feature directory (model suffix not appended) |
 | `--csv <path>` | `analyse`, `split`, `multilabel-split`, `multilabel-validate` | Label CSV path |
 | `--experiment <dir>` | `evaluate`, `heatmap`, `multilabel-evaluate` | Use a specific experiment directory |
 | `--use_best_config` | `train`, `crossval`, `multilabel-train`, `multilabel-crossval` | Merge best HPO config before running |
@@ -96,8 +99,8 @@ Feature extraction produces one directory per (patch-config, model) combination:
 
 ```
 results/features/
-    patch512_step512_level0__optimus__TUM/   ← TUM-filtered features
-    patch512_step512_level0__optimus/        ← full-slide features
+    patch512_step512_level0__optimus__TUM/
+    patch512_step512_level0__optimus/
     patch256_step256_level0__uni/
 ```
 
@@ -117,38 +120,9 @@ python main.py multilabel-hpo  --config config/config.yaml --features patch512_s
 
 ---
 
-## Implemented Modules
-
-| Module | Status | Key File |
-|---|---|---|
-| WSI Reading & Metadata | ✅ | `core/wsi_reader.py` |
-| Tissue Segmentation | ✅ | `core/segmenter.py` |
-| Patch Extraction | ✅ | `core/patcher.py` |
-| Debugging Utilities | ✅ | `pipelines/debug.py` |
-| Feature Extraction | ✅ | `pipelines/extract.py` |
-| Annotation Analysis | ✅ | `pipelines/analyse_annotations.py` |
-| Dataset Splitting (single-label) | ✅ | `pipelines/split.py` |
-| MIL Training (single-label) | ✅ | `pipelines/train.py` |
-| MIL Evaluation (single-label) | ✅ | `pipelines/evaluate.py` |
-| Attention Heatmaps | ✅ | `pipelines/visualize.py` |
-| Patch Classification | ✅ | `pipelines/classify.py` |
-| Prediction Heatmaps | ✅ | `pipelines/classify_heatmap.py` |
-| Hyperparameter Optimisation (single-label) | ✅ | `pipelines/hpo.py` |
-| K-Fold Cross-Validation (single-label) | ✅ | `pipelines/crossval.py` |
-| **Multi-Label Dataset Splitting** | ✅ | `pipelines/multilabel_split.py` |
-| **Multi-Label Dataset** | ✅ | `datasets/mil_multilabel_dataset.py` |
-| **Multi-Label MIL Models** | ✅ | `models/mil_multilabel_models.py` |
-| **Multi-Label Training** | ✅ | `pipelines/multilabel_train.py` |
-| **Multi-Label Evaluation** | ✅ | `pipelines/multilabel_evaluate.py` |
-| **Multi-Label HPO** | ✅ | `pipelines/multilabel_hpo.py` |
-| **Multi-Label Cross-Validation** | ✅ | `pipelines/multilabel_crossval.py` |
-| **Multi-Label CSV Validator** | ✅ | `utils/multilabel_validator.py` |
-
----
-
 ## Supported MIL Models
 
-Set via `mil.model` in `config.yaml` (shared by both pipelines):
+Set via `mil.model` in `config.yaml`:
 
 | Key | Architecture | Attention |
 |---|---|---|
@@ -183,8 +157,9 @@ Set via `mil.model` in `config.yaml` (shared by both pipelines):
 
 ## Key Configuration Options
 
+### Single-Label
+
 ```yaml
-# Single-label task
 task:
   name: metastasis
   type: binary          # binary | multiclass
@@ -192,34 +167,54 @@ task:
   class_names: [benign, malignant]
 
 mil:
-  model: abmil           # see model table above
-  encoding_size: 1536
+  model: abmil          # model architecture
+  encoding_size: 1536   # MUST match feature extractor output dim
+  proj_dim: 512         # internal projection dim (tunable by HPO)
+  hidden_dim: 256       # attention hidden size
+  dropout: 0.4          # dropout rate (default 0.4)
 
 training:
-  max_epochs: 100
-  learning_rate: 0.0002
-  weight_decay: 1e-4
   optimizer: AdamW
-  lr_scheduler: plateau   # plateau | cosine | step
+  learning_rate: 2.0e-3    # lr (default 2e-3)
+  weight_decay: 1.0e-3     # reg / L2 regularization (default 1e-3)
+  beta1: 0.75              # Adam β₁ (default 0.75)
+  beta2: 0.95              # Adam β₂ (default 0.95)
+  eps: 1.0e-2              # Adam ε (default 1e-2)
+  lr_scheduler: plateau
+  lr_scheduler_factor: 0.75   # decay factor (default 0.75)
+  lr_scheduler_patience: 20   # plateau patience (default 20)
   early_stopping: true
   early_stopping_patience: 20
-  label_smoothing: 0.0
-  patch_dropout: 0.0
-  patch_shuffle: false
+  max_patches: 800         # A_patches — max patches per slide (default 800)
+  max_epochs: 100
+```
 
-# Multi-label task
+### Multi-Label
+
+```yaml
 multilabel:
   task_name: multilabel_task
-  label_names: [TTN, TP53, MUC16]   # ← required: your actual labels
-  binary_columns: true               # true = one-column-per-label CSV format
-  threshold: 0.5                     # sigmoid decision threshold
+  label_names: [TTN, TP53, MUC16]
+  binary_columns: true
+  threshold: 0.5
 
 multilabel_training:
-  max_epochs: 100
-  learning_rate: 2.0e-4
+  optimizer: AdamW
+  learning_rate: 2.0e-3
+  weight_decay: 1.0e-3
+  beta1: 0.75
+  beta2: 0.95
+  eps: 1.0e-2
+  lr_scheduler: plateau
+  lr_scheduler_factor: 0.75
+  lr_scheduler_patience: 20
+  early_stopping: true
+  early_stopping_patience: 20
   loss: bce              # bce | focal
-  weighted_loss: true    # recommended for imbalanced datasets
+  weighted_loss: true
   monitor_metric: macro_auc
+  max_patches: 800       # A_patches
+  max_epochs: 100
 
 multilabel_split:
   type: train_val_test
@@ -239,13 +234,28 @@ multilabel_crossval:
 
 ---
 
+## Hyperparameter Reference
+
+All hyperparameters are configurable in `config.yaml` and tunable via HPO.
+
+| Parameter | Default | Key in config | Description |
+|---|---|---|---|
+| `dropout` | 0.4 | `mil.dropout` | Dropout applied to projection and classifier layers |
+| `proj_dim` | 512 | `mil.proj_dim` | Internal projection size (all post-projection layers) |
+| `hidden_dim` | 256 | `mil.hidden_dim` | Attention network hidden dimension |
+| `learning_rate` (lr) | 2e-3 | `training.learning_rate` | Adam/AdamW learning rate |
+| `weight_decay` (reg) | 1e-3 | `training.weight_decay` | L2 regularization strength |
+| `beta1` | 0.75 | `training.beta1` | Adam first moment decay rate |
+| `beta2` | 0.95 | `training.beta2` | Adam second moment decay rate |
+| `eps` | 1e-2 | `training.eps` | Adam numerical stability constant |
+| `lr_scheduler_factor` | 0.75 | `training.lr_scheduler_factor` | LR decay multiplier (plateau mode) |
+| `lr_scheduler_patience` | 20 | `training.lr_scheduler_patience` | Epochs before LR reduction (plateau) |
+| `max_patches` (A_patches) | 800 | `training.max_patches` | Max patches per slide per epoch |
+| `early_stopping_patience` | 20 | `training.early_stopping_patience` | Epochs without improvement before stopping |
+
+---
+
 ## Hyperparameter Optimisation (HPO)
-
-HPO uses [Optuna](https://optuna.org/) to automatically search over model architecture, optimizer, regularization, and scheduler.
-
-```bash
-pip install optuna tqdm scikit-multilearn
-```
 
 ### Single-Label HPO
 
@@ -265,31 +275,54 @@ python main.py multilabel-train   --config config/config.yaml --use_best_config
 python main.py multilabel-crossval --config config/config.yaml --use_best_config
 ```
 
+### HPO Search Space (both pipelines)
+
+| Parameter | Type | Range / Choices |
+|---|---|---|
+| `model` | categorical | `[abmil, clam_sb, clam_mb, mean_pool, transmil, dsmil]` |
+| `optimizer` | categorical | `[AdamW, Adam]` |
+| `learning_rate` | log-uniform | `[1e-4, 2e-3]` |
+| `weight_decay` | log-uniform | `[1e-5, 5e-3]` |
+| `beta1` | uniform | `[0.5, 0.99]` |
+| `beta2` | uniform | `[0.9, 0.999]` |
+| `eps` | log-uniform | `[1e-8, 1e-2]` |
+| `dropout` | uniform | `[0.1, 0.6]` |
+| `dropout_attn` | uniform | `[0.2, 0.5]` |
+| `dropout_classifier` | uniform | `[0.1, 0.4]` |
+| `attn_hidden_dim` | categorical | `[32, 64, 128, 256]` |
+| `feature_proj_dim` | categorical | `[256, 512]` |
+| `lr_scheduler` | categorical | `[plateau, cosine, step]` |
+| `lr_factor` | uniform | `[0.1, 0.9]` |
+| `lr_patience` | categorical | `[5, 10, 20]` |
+| `label_smoothing` | uniform | `[0.0, 0.15]` |
+| `early_stop_patience` | categorical | `[10, 15, 20]` |
+| `warmup_epochs` | categorical | `[0, 2, 5]` |
+| `patch_dropout` | uniform | `[0.0, 0.3]` |
+| `max_patches` (A_patches) | categorical | `[600, 700, 800, 900, 1000, 1100, 1200]` |
+
+Multi-label HPO additionally tunes: `loss`, `focal_gamma`, `threshold`, `patch_shuffle`.
+
 ### HPO Experiment Tracking
 
-Each HPO run creates an **isolated, timestamped directory**. Re-running with different features or configs never overwrites previous studies:
+Each HPO run creates an **isolated, timestamped directory**:
 
 ```
 results/hpo/
-    mil_hpo__patch512_step512_level0__optimus__TUM__20260329_143022/
-        experiment_info.json   ← provenance (features, device, task, timestamp)
+    mil_hpo__patch512_step512_level0__optimus__TUM__20260402_063229/
+        experiment_info.json   ← provenance (task, features, device, timestamp)
         base_config.yaml       ← exact config snapshot
         trial_0000/
             trial_config.yaml
             trial_metrics.json
-        best_config.yaml       ← best hyperparameters (merged)
+        best_config.yaml       ← best hyperparameters (merged config)
         best_trial.json
         hpo_results.csv
         study.db               ← Optuna SQLite (resumable)
-    ml_hpo__patch512_step512_level0__optimus__TUM__20260330_094511/
-        ...
 ```
 
 ---
 
 ## Cross-Validation
-
-Pools train + val splits and runs stratified K-fold, training a fresh model per fold.
 
 ### Single-Label CV
 
@@ -297,7 +330,6 @@ Pools train + val splits and runs stratified K-fold, training a fresh model per 
 python main.py crossval --config config/config.yaml
 python main.py crossval --config config/config.yaml --use_best_config
 python main.py crossval --config config/config.yaml --features patch512_step512_level0__optimus__TUM
-python main.py crossval --config config/config.yaml --use_best_config --features patch512_step512_level0__optimus__TUM
 ```
 
 ### Multi-Label CV
@@ -306,130 +338,55 @@ python main.py crossval --config config/config.yaml --use_best_config --features
 python main.py multilabel-crossval --config config/config.yaml
 python main.py multilabel-crossval --config config/config.yaml --use_best_config
 python main.py multilabel-crossval --config config/config.yaml --features patch512_step512_level0__optimus__TUM
-python main.py multilabel-crossval --config config/config.yaml --use_best_config --features patch512_step512_level0__optimus__TUM
 ```
 
 ### CV Experiment Tracking
 
-Every CV run is saved in a **unique, structured directory** that encodes task, model, feature folder, and timestamp — so multiple runs never overwrite each other:
+Every run is saved to a **unique, structured directory** encoding task → model → features → timestamp:
 
 ```
-results/
-├── crossval/                              ← single-label CV
-│   └── <task_name>/
-│       └── <model>__<feat_dir>__<YYYYMMDD_HHMMSS>/
-│           ├── experiment_info.json       ← provenance metadata
-│           ├── config_snapshot.yaml       ← exact config used
-│           ├── combined_pool.csv          ← merged train+val pool
-│           ├── fold_01/
-│           │   ├── best_model.pt
-│           │   └── fold_metrics.json
-│           ├── ...
-│           ├── cv_summary.json            ← mean ± std across folds
-│           └── cv_summary.csv
-│
-└── multilabel/
-    └── crossval/                          ← multi-label CV
-        └── <task_name>/
-            └── <model>__<feat_dir>__<YYYYMMDD_HHMMSS>/
-                ├── experiment_info.json
-                ├── config_snapshot.yaml
-                ├── combined_pool.csv
-                ├── fold_01/
-                │   ├── best_model.pt
-                │   └── fold_metrics.json
-                ├── ...
-                ├── cv_summary.json
-                └── cv_summary.csv
-```
-
-**Example run names:**
-```
-abmil__patch512_step512_level0__optimus__TUM__20260401_103245/
-clam_sb__patch256_step256_level0__uni__20260401_120000/
-transmil__patch512_step512_level0__optimus__TUM__20260401_143022/
+results/crossval/<task_name>/<model>__<feat_dir>__<YYYYMMDD_HHMMSS>/
+    experiment_info.json    ← task, model, features, n_folds, timestamp
+    config_snapshot.yaml    ← exact config.yaml used
+    combined_pool.csv       ← merged train+val pool
+    fold_01/ ... fold_N/
+        best_model.pt
+        fold_metrics.json
+    cv_summary.json         ← mean ± std across all folds
+    cv_summary.csv
 ```
 
 ---
 
-## Multi-Label Pipeline
-
-### End-to-End Workflow
+## Multi-Label Pipeline — End-to-End
 
 ```bash
-# 1. Validate your label CSV
-python main.py multilabel-validate --config config/config.yaml --csv dataset/annotations/labels.csv
+# 1. Validate CSV coverage
+python main.py multilabel-validate --config config/config.yaml \
+    --csv dataset/annotations/labels.csv \
+    --features patch512_step512_level0__optimus__TUM
 
-# 2. Create stratified splits (70/15/15 by default)
-python main.py multilabel-split --config config/config.yaml --csv dataset/annotations/labels.csv
+# 2. Stratified splits (70/15/15)
+python main.py multilabel-split --config config/config.yaml \
+    --csv dataset/annotations/labels.csv
 
 # 3. Train
-python main.py multilabel-train --config config/config.yaml --features patch512_step512_level0__optimus__TUM
+python main.py multilabel-train --config config/config.yaml \
+    --features patch512_step512_level0__optimus__TUM
 
-# 4. Evaluate on test set
+# 4. Evaluate
 python main.py multilabel-evaluate --config config/config.yaml
 
-# 5. HPO (30 trials × 30 epochs by default)
-python main.py multilabel-hpo --config config/config.yaml --features patch512_step512_level0__optimus__TUM
+# 5. HPO (30 trials)
+python main.py multilabel-hpo --config config/config.yaml \
+    --features patch512_step512_level0__optimus__TUM
 
 # 6. Retrain with best config
 python main.py multilabel-train --config config/config.yaml --use_best_config
 
 # 7. Cross-validate
-python main.py multilabel-crossval --config config/config.yaml --features patch512_step512_level0__optimus__TUM
-```
-
-### CSV Formats
-
-**Format A — Binary columns (one column per label):**
-```csv
-slide_id,TTN,TP53,MUC16
-TCGA-XX-1234,1,0,1
-TCGA-XX-5678,0,1,0
-```
-
-**Format B — String column:**
-```csv
-slide_id,labels
-TCGA-XX-1234,"TTN,MUC16"
-TCGA-XX-5678,TP53
-```
-Set `multilabel.binary_columns: false` and `multilabel.labels_string_col: labels` in config for Format B.
-
-### Multi-Label Outputs
-
-```
-results/multilabel/
-├── splits/<task_name>/
-│   ├── train.csv
-│   ├── val.csv
-│   ├── test.csv
-│   └── split_summary.txt
-├── experiments/<task_name>/<model>_<timestamp>/
-│   ├── best_model.pt
-│   ├── train_history.csv
-│   ├── config_snapshot.yaml
-│   ├── plots/
-│   │   ├── loss_curve.png
-│   │   └── macro_auc_curve.png
-│   └── evaluate/
-│       ├── metrics.json          ← macro/micro AUC, F1, Hamming, SubsetAcc
-│       ├── per_label_metrics.csv
-│       └── roc_curves/
-│           └── <label>_roc.png
-├── hpo/
-│   └── ml_hpo__<feat>__<YYYYMMDD_HHMMSS>/
-│       ├── experiment_info.json
-│       ├── best_config.yaml
-│       └── hpo_results.csv
-└── crossval/<task_name>/
-    └── <model>__<feat>__<YYYYMMDD_HHMMSS>/
-        ├── experiment_info.json
-        ├── fold_01/
-        │   ├── best_model.pt
-        │   └── fold_metrics.json
-        ├── cv_summary.json
-        └── cv_summary.csv
+python main.py multilabel-crossval --config config/config.yaml \
+    --features patch512_step512_level0__optimus__TUM
 ```
 
 ---
@@ -438,16 +395,17 @@ results/multilabel/
 
 | Technique | Single-Label Key | Multi-Label Key | HPO-Tunable |
 |---|---|---|---|
+| Dropout | `mil.dropout` | `mil.dropout` | ✅ |
+| L2 regularization | `training.weight_decay` | `multilabel_training.weight_decay` | ✅ |
 | Label smoothing | `training.label_smoothing` | `multilabel_training.label_smoothing` | ✅ |
-| Patch-level dropout | `training.patch_dropout` | `multilabel_training.patch_dropout` | ✅ |
-| Patch shuffling | `training.patch_shuffle` | `multilabel_training.patch_shuffle` | – |
-| Bag size cap | `training.max_patches` | `multilabel_training.max_patches` | ✅ |
-| Weight decay | `training.weight_decay` | `multilabel_training.weight_decay` | ✅ |
+| Patch dropout | `training.patch_dropout` | `multilabel_training.patch_dropout` | ✅ |
+| Patch shuffling | `training.patch_shuffle` | `multilabel_training.patch_shuffle` | ✅ |
+| Bag size cap (A_patches) | `training.max_patches` | `multilabel_training.max_patches` | ✅ |
 | LR warmup | `training.warmup_epochs` | `multilabel_training.warmup_epochs` | ✅ |
 | LR scheduling | `training.lr_scheduler` | `multilabel_training.lr_scheduler` | ✅ |
-| Early stopping | `training.early_stopping` | `multilabel_training.early_stopping` | – |
-| Focal loss | – | `multilabel_training.loss: focal` | ✅ |
-| Per-label pos_weight | – | `multilabel_training.weighted_loss` | – |
+| Early stopping | `training.early_stopping` | `multilabel_training.early_stopping` | — |
+| Focal loss | — | `multilabel_training.loss: focal` | ✅ |
+| Per-label pos_weight | — | `multilabel_training.weighted_loss` | — |
 
 ---
 
@@ -460,9 +418,9 @@ HPO: config missing required key 'task.class_names'
 HPO aborted due to missing configuration keys.
 ```
 
-Required (single-label): `mil.model`, `task.name`, `task.num_classes`, `task.class_names`, `training.max_epochs`, `paths.results_dir`
+**Required (single-label):** `mil.model`, `task.name`, `task.num_classes`, `task.class_names`, `training.max_epochs`, `paths.results_dir`
 
-Required (multi-label): `mil.model`, `mil.encoding_size`, `multilabel.label_names`, `multilabel_training.learning_rate`, `paths.results_dir`
+**Required (multi-label):** `mil.model`, `mil.encoding_size`, `multilabel.label_names`, `multilabel_training.learning_rate`, `paths.results_dir`
 
 ---
 
@@ -470,6 +428,6 @@ Required (multi-label): `mil.model`, `mil.encoding_size`, `multilabel.label_name
 
 | File | Contents |
 |---|---|
-| `docs/setup_and_usage.md` | Full installation, commands, feature dir resolution, HPO, CV |
+| `docs/setup_and_usage.md` | Full installation, all commands, HP reference, HPO, CV |
 | `docs/architecture.md` | Pipeline architecture and module relationships |
 | `config/config.yaml` | Fully-annotated configuration (all pipeline parameters) |
