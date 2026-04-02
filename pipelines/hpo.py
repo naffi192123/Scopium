@@ -262,7 +262,7 @@ def _suggest_hyperparams(trial, hpo_cfg: dict, base_config: dict) -> dict:
     dropout_attn   = _uni('dropout_attn', 0.2, 0.5)
     dropout_clf    = _uni('dropout_classifier', 0.1, 0.4)
     hidden_dim     = _cat('attn_hidden_dim', 256)
-    proj_dim       = _cat('feature_proj_dim', 512)
+    proj_dim       = _cat('proj_dim', 512)
     scheduler_name = _cat('lr_scheduler', 'plateau')
     lr_factor      = _uni('lr_factor', 0.1, 0.9)
     lr_patience    = _cat('lr_patience', 20)
@@ -280,7 +280,7 @@ def _suggest_hyperparams(trial, hpo_cfg: dict, base_config: dict) -> dict:
             'dropout':   dropout,
             'dropout_attn':       dropout_attn,
             'dropout_classifier': dropout_clf,
-            'proj_dim':  proj_dim,         # internal projection size (was feature_proj_dim)
+            'proj_dim':  proj_dim,         # canonical name — same as Optuna param and config key
         },
         'training': {
             'optimizer':               optimizer_name,
@@ -698,27 +698,40 @@ def command_hpo(config: dict, dirs_dict: dict, log=None):
 
 
 def _suggest_from_params(params: dict, base_config: dict) -> dict:
-    """Reconstruct config overrides dict from Optuna best trial params."""
+    """Reconstruct config overrides dict from Optuna best trial params.
+
+    Maps Optuna parameter names → config keys.
+    Note: Optuna stores the suggested value under the name passed to
+    trial.suggest_*() — e.g. 'feature_proj_dim' for the proj_dim search param.
+    We normalise everything here so downstream code always reads 'proj_dim'.
+    """
+    mil_base = base_config.get('mil', {})
     return {
         'mil': {
-            'model':               params.get('model', base_config.get('mil', {}).get('model', 'abmil')),
-            'hidden_dim':          params.get('attn_hidden_dim', 256),
-            'dropout':             params.get('dropout', 0.25),
-            'dropout_attn':        params.get('dropout_attn', 0.25),
-            'dropout_classifier':  params.get('dropout_classifier', 0.1),
-            'feature_proj_dim':    params.get('feature_proj_dim', 512),
+            'model':              params.get('model',          mil_base.get('model', 'abmil')),
+            'hidden_dim':         params.get('attn_hidden_dim', 256),
+            'dropout':            params.get('dropout',         0.4),
+            'dropout_attn':       params.get('dropout_attn',    0.25),
+            'dropout_classifier': params.get('dropout_classifier', 0.1),
+            # Canonical key: proj_dim — Optuna param is also 'proj_dim' now.
+            'proj_dim':           params.get('proj_dim', 512),
         },
         'training': {
-            'optimizer':               params.get('optimizer', 'AdamW'),
-            'learning_rate':           params.get('learning_rate', 2e-4),
-            'weight_decay':            params.get('weight_decay', 1e-4),
-            'lr_scheduler':            params.get('lr_scheduler', 'plateau'),
-            'label_smoothing':         params.get('label_smoothing', 0.0),
-            'early_stopping_patience': params.get('early_stop_patience', 15),
-            'warmup_epochs':           params.get('warmup_epochs', 0),
-            'patch_dropout':           params.get('patch_dropout', 0.0),
-            'patch_shuffle':           params.get('patch_shuffle', True),
-            'max_patches':             params.get('max_patches'),
+            'optimizer':               params.get('optimizer',        'AdamW'),
+            'learning_rate':           params.get('learning_rate',    2e-3),
+            'weight_decay':            params.get('weight_decay',     1e-3),
+            'beta1':                   params.get('beta1',            0.75),
+            'beta2':                   params.get('beta2',            0.95),
+            'eps':                     params.get('eps',              1e-2),
+            'lr_scheduler':            params.get('lr_scheduler',     'plateau'),
+            'lr_scheduler_factor':     params.get('lr_factor',        0.75),
+            'lr_scheduler_patience':   params.get('lr_patience',      20),
+            'label_smoothing':         params.get('label_smoothing',  0.0),
+            'early_stopping_patience': params.get('early_stop_patience', 20),
+            'warmup_epochs':           params.get('warmup_epochs',    0),
+            'patch_dropout':           params.get('patch_dropout',    0.0),
+            'patch_shuffle':           params.get('patch_shuffle',    False),
+            'max_patches':             params.get('max_patches',      800),
         },
     }
 

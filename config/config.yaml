@@ -261,7 +261,7 @@ hpo:
     dropout_attn:        [0.2, 0.5]            # uniform
     dropout_classifier:  [0.1, 0.4]            # uniform
     attn_hidden_dim:     [32, 64, 128, 256]    # categorical
-    feature_proj_dim:    [256, 512]            # categorical
+    proj_dim:            [256, 512]            # categorical
     lr_scheduler:        [cosine, step, plateau]  # categorical
     lr_factor:           [0.1, 0.9]            # uniform (plateau decay factor)
     lr_patience:         [5, 10, 20]           # categorical (plateau patience)

@@ -65,13 +65,13 @@ class MLMeanPoolMIL(nn.Module):
     """Global average pool -> FC -> sigmoid for multi-label."""
 
     def __init__(self, encoding_size=1024, n_labels=8, dropout=0.25,
-                 threshold=0.5, **kw):
+                 threshold=0.5, proj_dim=512, **kw):
         super().__init__()
         self.threshold = threshold
         self.classifier = nn.Sequential(
-            nn.Linear(encoding_size, 512), nn.ReLU(),
+            nn.Linear(encoding_size, proj_dim), nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(512, n_labels))
+            nn.Linear(proj_dim, n_labels))
         initialize_weights(self)
 
     def forward(self, h, attention_only=False):
@@ -89,13 +89,13 @@ class MLMaxPoolMIL(nn.Module):
     """Global max pool -> FC -> sigmoid for multi-label."""
 
     def __init__(self, encoding_size=1024, n_labels=8, dropout=0.25,
-                 threshold=0.5, **kw):
+                 threshold=0.5, proj_dim=512, **kw):
         super().__init__()
         self.threshold = threshold
         self.classifier = nn.Sequential(
-            nn.Linear(encoding_size, 512), nn.ReLU(),
+            nn.Linear(encoding_size, proj_dim), nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(512, n_labels))
+            nn.Linear(proj_dim, n_labels))
         initialize_weights(self)
 
     def forward(self, h, attention_only=False):
@@ -114,10 +114,9 @@ class MLABMIL(nn.Module):
 
     def __init__(self, encoding_size=1024, n_labels=8,
                  hidden_dim=256, dropout=0.25, threshold=0.5,
-                 feature_proj_dim=512, **kw):
+                 proj_dim=512, **kw):
         super().__init__()
         self.threshold  = threshold
-        proj_dim        = feature_proj_dim or 512
         self.projection = nn.Sequential(
             nn.Linear(encoding_size, proj_dim), nn.ReLU(),
             nn.Dropout(dropout))
@@ -146,12 +145,11 @@ class MLCLAM_SB(nn.Module):
 
     def __init__(self, encoding_size=1024, n_labels=8,
                  hidden_dim=256, dropout=0.25, k_sample=8,
-                 threshold=0.5, feature_proj_dim=512, **kw):
+                 threshold=0.5, proj_dim=512, **kw):
         super().__init__()
         self.n_labels  = n_labels
         self.k_sample  = k_sample
         self.threshold = threshold
-        proj_dim       = feature_proj_dim or 512
 
         self.proj  = nn.Sequential(
             nn.Linear(encoding_size, proj_dim), nn.ReLU(), nn.Dropout(dropout))
@@ -183,11 +181,10 @@ class MLCLAM_MB(nn.Module):
 
     def __init__(self, encoding_size=1024, n_labels=8,
                  hidden_dim=256, dropout=0.25, k_sample=8,
-                 threshold=0.5, feature_proj_dim=512, **kw):
+                 threshold=0.5, proj_dim=512, **kw):
         super().__init__()
         self.n_labels  = n_labels
         self.threshold = threshold
-        proj_dim       = feature_proj_dim or 512
 
         self.proj  = nn.Sequential(
             nn.Linear(encoding_size, proj_dim), nn.ReLU(), nn.Dropout(dropout))
@@ -249,10 +246,9 @@ class MLDSMIL(nn.Module):
 
     def __init__(self, encoding_size=1024, n_labels=8,
                  hidden_dim=256, dropout=0.25, threshold=0.5,
-                 feature_proj_dim=512, **kw):
+                 proj_dim=512, **kw):
         super().__init__()
         self.threshold = threshold
-        proj_dim       = feature_proj_dim or 512
 
         self.proj     = nn.Sequential(
             nn.Linear(encoding_size, proj_dim), nn.ReLU(), nn.Dropout(dropout))
@@ -317,7 +313,9 @@ def build_multilabel_model(config: dict) -> Tuple[nn.Module, int]:
     hidden_dim     = mil_cfg.get("hidden_dim", 256)
     dropout        = mil_cfg.get("dropout", 0.25)
     k_sample       = mil_cfg.get("k_sample", 8)
-    feature_proj   = mil_cfg.get("feature_proj_dim", 512)
+    # proj_dim: HPO writes mil.proj_dim; legacy key is mil.feature_proj_dim
+    proj_dim       = int(mil_cfg.get("proj_dim",
+                         mil_cfg.get("feature_proj_dim", 512)))
     label_names    = ml_cfg.get("label_names", [])
     n_labels       = len(label_names)
     threshold      = float(ml_cfg.get("threshold", 0.5))
@@ -338,7 +336,7 @@ def build_multilabel_model(config: dict) -> Tuple[nn.Module, int]:
         dropout         = dropout,
         k_sample        = k_sample,
         threshold       = threshold,
-        feature_proj_dim= feature_proj,
+        proj_dim        = proj_dim,    # consistent key — no more feature_proj_dim
     )
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
