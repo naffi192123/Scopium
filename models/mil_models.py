@@ -393,6 +393,37 @@ _MODEL_REGISTRY = {
 }
 
 
+def _validate_mil_dims(model: nn.Module, encoding_size: int, n_classes: int):
+    """Verify the model's internal dimensions are consistent.
+
+    Runs a CPU forward pass with a tiny fake bag (k_sample*3 patches).
+    Catches self.proj vs inst_clfs dimension mismatches that arise when
+    mil_models.py is partially updated (proj hardcoded but inst_clfs use proj_dim).
+
+    Raises RuntimeError with a clear message if dimensions are inconsistent.
+    """
+    k_sample = getattr(model, 'k_sample', 8)
+    n_patches = max(k_sample * 3, 16)   # must be >= 2*k_sample for _inst_eval
+    fake_h    = torch.zeros(n_patches, encoding_size)
+    was_training = model.training
+    model.eval()
+    try:
+        with torch.no_grad():
+            if hasattr(model, 'inst_clfs'):             # CLAM_SB / CLAM_MB
+                fake_label = torch.zeros(1, dtype=torch.long)
+                model(fake_h, label=fake_label, instance_eval=True)
+            else:
+                model(fake_h)
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"MIL model dimension mismatch detected: {exc}\n"
+            f"  → proj and inst_clfs were built with different proj_dim values.\n"
+            f"  → Update models/mil_models.py to the latest version (git pull)."
+        ) from exc
+    finally:
+        model.train(was_training)
+
+
 def build_mil_model(config: dict) -> tuple:
     """
     Build and return a MIL model from config.
@@ -439,6 +470,9 @@ def build_mil_model(config: dict) -> tuple:
         dropout       = dropout,
         k_sample      = k_sample,
     )
+
+    # Validate internal dimensions are consistent (catches partial-update bugs)
+    _validate_mil_dims(model, encoding_size, n_classes)
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     return model, n_params
