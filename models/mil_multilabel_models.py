@@ -15,17 +15,14 @@ where:
     probs     : (1, n_labels)  — sigmoid(logits), independent per-label prob
     preds     : (1, n_labels)  — bool (probs > threshold)
     attention : (N,) per-patch attention weights (None for pool models)
-    extras    : dict (e.g. instance_loss for CLAM)
+    extras    : dict
 
-Supported models
+Dimension safety
 ----------------
-mean_pool  : Mean Pooling -> FC -> sigmoid
-max_pool   : Max Pooling  -> FC -> sigmoid
-abmil      : Gated Attention MIL  (Ilse 2018)
-clam_sb    : CLAM Single-Branch   (Lu 2021)
-clam_mb    : CLAM Multi-Branch    (Lu 2021)
-transmil   : Transformer MIL      (Shao 2021)
-dsmil      : Dual-Stream MIL      (Li 2021)
+Like the single-label models, every class uses _probe_dim() to read the
+actual output dimension of self.proj and builds all downstream layers from
+it.  This makes shape mismatches impossible regardless of what proj_dim value
+is requested or what any stale code may have hardcoded internally.
 """
 
 from __future__ import annotations
@@ -34,15 +31,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from typing import Optional, Tuple, Dict, List
 
-# Reuse weight init from single-label models
 from models.mil_models import (
     initialize_weights,
+    _probe_dim,
     _GatedAttn,
     _AttnNetGated,
     _NystromAttention,
-    _MODEL_REGISTRY as _SL_REGISTRY,
 )
 
 
@@ -51,7 +46,6 @@ from models.mil_models import (
 # ---------------------------------------------------------------------------
 
 def _sigmoid_preds(logits: torch.Tensor, threshold: float = 0.5):
-    """logits (1, n_labels) -> probs, preds."""
     probs = torch.sigmoid(logits)
     preds = (probs > threshold).float()
     return probs, preds
@@ -62,21 +56,20 @@ def _sigmoid_preds(logits: torch.Tensor, threshold: float = 0.5):
 # ---------------------------------------------------------------------------
 
 class MLMeanPoolMIL(nn.Module):
-    """Global average pool -> FC -> sigmoid for multi-label."""
-
     def __init__(self, encoding_size=1024, n_labels=8, dropout=0.25,
                  threshold=0.5, proj_dim=512, **kw):
         super().__init__()
         self.threshold = threshold
-        self.classifier = nn.Sequential(
-            nn.Linear(encoding_size, proj_dim), nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(proj_dim, n_labels))
+        self.proj = nn.Sequential(
+            nn.Linear(encoding_size, proj_dim), nn.ReLU(), nn.Dropout(dropout))
+        _d = _probe_dim(self.proj, encoding_size)
+        self.classifier = nn.Linear(_d, n_labels)
         initialize_weights(self)
 
     def forward(self, h, attention_only=False):
-        h = h.mean(dim=0, keepdim=True)              # (1, D)
-        logits = self.classifier(h)                   # (1, n_labels)
+        h      = h.mean(dim=0, keepdim=True)
+        h      = self.proj(h)
+        logits = self.classifier(h)
         probs, preds = _sigmoid_preds(logits, self.threshold)
         return logits, probs, preds, None, {}
 
@@ -86,20 +79,19 @@ class MLMeanPoolMIL(nn.Module):
 # ---------------------------------------------------------------------------
 
 class MLMaxPoolMIL(nn.Module):
-    """Global max pool -> FC -> sigmoid for multi-label."""
-
     def __init__(self, encoding_size=1024, n_labels=8, dropout=0.25,
                  threshold=0.5, proj_dim=512, **kw):
         super().__init__()
         self.threshold = threshold
-        self.classifier = nn.Sequential(
-            nn.Linear(encoding_size, proj_dim), nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(proj_dim, n_labels))
+        self.proj = nn.Sequential(
+            nn.Linear(encoding_size, proj_dim), nn.ReLU(), nn.Dropout(dropout))
+        _d = _probe_dim(self.proj, encoding_size)
+        self.classifier = nn.Linear(_d, n_labels)
         initialize_weights(self)
 
     def forward(self, h, attention_only=False):
-        h = h.max(dim=0, keepdim=True).values         # (1, D)
+        h      = h.max(dim=0, keepdim=True).values
+        h      = self.proj(h)
         logits = self.classifier(h)
         probs, preds = _sigmoid_preds(logits, self.threshold)
         return logits, probs, preds, None, {}
@@ -110,28 +102,26 @@ class MLMaxPoolMIL(nn.Module):
 # ---------------------------------------------------------------------------
 
 class MLABMIL(nn.Module):
-    """Gated Attention MIL — multi-label sigmoid output."""
-
     def __init__(self, encoding_size=1024, n_labels=8,
                  hidden_dim=256, dropout=0.25, threshold=0.5,
                  proj_dim=512, **kw):
         super().__init__()
         self.threshold  = threshold
         self.projection = nn.Sequential(
-            nn.Linear(encoding_size, proj_dim), nn.ReLU(),
-            nn.Dropout(dropout))
-        self.attn       = _GatedAttn(proj_dim, hidden_dim, dropout)
-        self.classifier = nn.Linear(proj_dim, n_labels)
+            nn.Linear(encoding_size, proj_dim), nn.ReLU(), nn.Dropout(dropout))
+        _d = _probe_dim(self.projection, encoding_size)
+        self.attn       = _GatedAttn(_d, hidden_dim, dropout)
+        self.classifier = nn.Linear(_d, n_labels)
         initialize_weights(self)
 
     def forward(self, h, attention_only=False):
-        h     = self.projection(h)                     # (N, proj_dim)
-        A     = self.attn(h)                           # (N, 1)
-        A_soft = F.softmax(A, dim=0)                  # (N, 1)
+        h      = self.projection(h)
+        A      = self.attn(h)
+        A_soft = F.softmax(A, dim=0)
         if attention_only:
             return A_soft.squeeze()
-        M      = (A_soft * h).sum(dim=0, keepdim=True) # (1, proj_dim)
-        logits = self.classifier(M)                    # (1, n_labels)
+        M      = (A_soft * h).sum(dim=0, keepdim=True)
+        logits = self.classifier(M)
         probs, preds = _sigmoid_preds(logits, self.threshold)
         return logits, probs, preds, A_soft.squeeze(), {}
 
@@ -141,8 +131,6 @@ class MLABMIL(nn.Module):
 # ---------------------------------------------------------------------------
 
 class MLCLAM_SB(nn.Module):
-    """CLAM Single-Branch — multi-label sigmoid output."""
-
     def __init__(self, encoding_size=1024, n_labels=8,
                  hidden_dim=256, dropout=0.25, k_sample=8,
                  threshold=0.5, proj_dim=512, **kw):
@@ -151,21 +139,22 @@ class MLCLAM_SB(nn.Module):
         self.k_sample  = k_sample
         self.threshold = threshold
 
-        self.proj  = nn.Sequential(
+        self.proj = nn.Sequential(
             nn.Linear(encoding_size, proj_dim), nn.ReLU(), nn.Dropout(dropout))
-        self.attn  = _AttnNetGated(proj_dim, hidden_dim, dropout, n_classes=1)
-        self.clf   = nn.Linear(proj_dim, n_labels)
+        _d = _probe_dim(self.proj, encoding_size)
+        self.attn = _AttnNetGated(_d, hidden_dim, dropout, n_classes=1)
+        self.clf  = nn.Linear(_d, n_labels)
         initialize_weights(self)
 
     def forward(self, h, label=None, instance_eval=False, attention_only=False):
         h      = self.proj(h)
-        A, h   = self.attn(h)                          # (N,1), (N, proj_dim)
-        A      = A.squeeze(1)                          # (N,)
+        A, h   = self.attn(h)
+        A      = A.squeeze(1)
         if attention_only:
             return F.softmax(A, dim=0)
         A_soft = F.softmax(A, dim=0)
-        M      = (A_soft.unsqueeze(1) * h).sum(0, keepdim=True)  # (1, proj_dim)
-        logits = self.clf(M)                           # (1, n_labels)
+        M      = (A_soft.unsqueeze(1) * h).sum(0, keepdim=True)
+        logits = self.clf(M)
         probs, preds = _sigmoid_preds(logits, self.threshold)
         return logits, probs, preds, A_soft, {}
 
@@ -176,7 +165,8 @@ class MLCLAM_SB(nn.Module):
 
 class MLCLAM_MB(nn.Module):
     """CLAM Multi-Branch — multi-label sigmoid output.
-    Uses one attention branch, shared across all labels.
+    Uses a single shared attention branch (per-class branches are ill-defined
+    for multi-label outputs).
     """
 
     def __init__(self, encoding_size=1024, n_labels=8,
@@ -186,16 +176,16 @@ class MLCLAM_MB(nn.Module):
         self.n_labels  = n_labels
         self.threshold = threshold
 
-        self.proj  = nn.Sequential(
+        self.proj = nn.Sequential(
             nn.Linear(encoding_size, proj_dim), nn.ReLU(), nn.Dropout(dropout))
-        # single shared attention branch (branch per class is ill-defined for ML)
-        self.attn  = _AttnNetGated(proj_dim, hidden_dim, dropout, n_classes=1)
-        self.clf   = nn.Linear(proj_dim, n_labels)
+        _d = _probe_dim(self.proj, encoding_size)
+        self.attn = _AttnNetGated(_d, hidden_dim, dropout, n_classes=1)
+        self.clf  = nn.Linear(_d, n_labels)
         initialize_weights(self)
 
     def forward(self, h, label=None, instance_eval=False, attention_only=False):
         h      = self.proj(h)
-        A, h   = self.attn(h)                          # (N,1), (N, proj_dim)
+        A, h   = self.attn(h)
         A      = A.squeeze(1)
         if attention_only:
             return F.softmax(A, dim=0)
@@ -211,28 +201,24 @@ class MLCLAM_MB(nn.Module):
 # ---------------------------------------------------------------------------
 
 class MLTransMIL(nn.Module):
-    """Transformer-based MIL — multi-label sigmoid output."""
-
     def __init__(self, encoding_size=1024, n_labels=8,
                  hidden_dim=512, dropout=0.25, threshold=0.5, **kw):
         super().__init__()
         self.threshold  = threshold
         self.proj       = nn.Sequential(nn.Linear(encoding_size, hidden_dim), nn.ReLU())
-        self.pos_enc    = nn.Parameter(torch.zeros(1, 1, hidden_dim))
-        self.layer1     = _NystromAttention(hidden_dim, heads=8, dropout=dropout)
-        self.layer2     = _NystromAttention(hidden_dim, heads=8, dropout=dropout)
-        self.classifier = nn.Sequential(
-            nn.LayerNorm(hidden_dim),
-            nn.Linear(hidden_dim, n_labels))
+        _d = _probe_dim(self.proj, encoding_size)
+        self.pos_enc    = nn.Parameter(torch.zeros(1, 1, _d))
+        self.layer1     = _NystromAttention(_d, heads=8, dropout=dropout)
+        self.layer2     = _NystromAttention(_d, heads=8, dropout=dropout)
+        self.classifier = nn.Sequential(nn.LayerNorm(_d), nn.Linear(_d, n_labels))
         initialize_weights(self)
 
     def forward(self, h, attention_only=False):
-        h = self.proj(h).unsqueeze(0)                  # (1, N, hidden_dim)
-        h = h + self.pos_enc
+        h = self.proj(h).unsqueeze(0) + self.pos_enc
         h = self.layer1(h)
         h = self.layer2(h)
-        z = h.squeeze(0).mean(dim=0, keepdim=True)     # (1, hidden_dim)
-        logits = self.classifier(z)                    # (1, n_labels)
+        z = h.squeeze(0).mean(dim=0, keepdim=True)
+        logits = self.classifier(z)
         probs, preds = _sigmoid_preds(logits, self.threshold)
         return logits, probs, preds, None, {}
 
@@ -242,37 +228,32 @@ class MLTransMIL(nn.Module):
 # ---------------------------------------------------------------------------
 
 class MLDSMIL(nn.Module):
-    """Dual-Stream MIL — multi-label sigmoid output."""
-
     def __init__(self, encoding_size=1024, n_labels=8,
                  hidden_dim=256, dropout=0.25, threshold=0.5,
                  proj_dim=512, **kw):
         super().__init__()
         self.threshold = threshold
 
-        self.proj     = nn.Sequential(
+        self.proj = nn.Sequential(
             nn.Linear(encoding_size, proj_dim), nn.ReLU(), nn.Dropout(dropout))
-        self.inst_clf = nn.Linear(proj_dim, n_labels)
-        self.q        = nn.Linear(proj_dim, hidden_dim)
-        self.k        = nn.Linear(proj_dim, hidden_dim)
-        self.bag_clf  = nn.Linear(proj_dim, n_labels)
+        _d = _probe_dim(self.proj, encoding_size)
+        self.inst_clf = nn.Linear(_d, n_labels)
+        self.q        = nn.Linear(_d, hidden_dim)
+        self.k        = nn.Linear(_d, hidden_dim)
+        self.bag_clf  = nn.Linear(_d, n_labels)
         initialize_weights(self)
 
     def forward(self, h, attention_only=False):
-        h           = self.proj(h)                     # (N, proj_dim)
-        inst_logits = self.inst_clf(h)                 # (N, n_labels)
-        # critical instance: highest mean sigmoid across labels
+        h           = self.proj(h)
+        inst_logits = self.inst_clf(h)
         crit_idx    = torch.sigmoid(inst_logits).mean(dim=1).argmax()
         crit        = h[crit_idx].unsqueeze(0)
-
-        scores = (self.q(crit) * self.k(h)).sum(-1)   # (N,)
-        A      = F.softmax(scores, dim=0)
+        scores      = (self.q(crit) * self.k(h)).sum(-1)
+        A           = F.softmax(scores, dim=0)
         if attention_only:
             return A
-        M = (A.unsqueeze(1) * h).sum(0, keepdim=True) # (1, proj_dim)
-
-        bag_logits = self.bag_clf(M)                   # (1, n_labels)
-        # ensemble averaged
+        M = (A.unsqueeze(1) * h).sum(0, keepdim=True)
+        bag_logits = self.bag_clf(M)
         logits = (inst_logits[crit_idx].unsqueeze(0) + bag_logits) / 2.0
         probs, preds = _sigmoid_preds(logits, self.threshold)
         return logits, probs, preds, A, {}
@@ -293,32 +274,32 @@ _ML_MODEL_REGISTRY = {
 }
 
 
-def build_multilabel_model(config: dict) -> Tuple[nn.Module, int]:
-    """
-    Build and return a multi-label MIL model from config.
+def build_multilabel_model(config: dict):
+    """Build and return a multi-label MIL model from config.
 
     Uses:
-        config.mil.model              → model key
-        config.mil.encoding_size      → input feature dimension
-        config.mil.hidden_dim         → attention hidden size
-        config.mil.dropout            → dropout rate
-        config.multilabel.label_names → output size (n_labels)
-        config.multilabel.threshold   → sigmoid decision threshold
+        config.mil.model              -> model key
+        config.mil.encoding_size      -> input feature dimension
+        config.mil.hidden_dim         -> attention hidden size
+        config.mil.proj_dim           -> requested projection size
+                                        (actual dim auto-detected from self.proj)
+        config.mil.dropout            -> dropout rate
+        config.multilabel.label_names -> output size (n_labels)
+        config.multilabel.threshold   -> sigmoid decision threshold
     """
     mil_cfg  = config.get("mil", {})
     ml_cfg   = config.get("multilabel", {})
 
-    model_key      = mil_cfg.get("model", "abmil").lower().strip()
-    encoding_size  = mil_cfg.get("encoding_size", 1024)
-    hidden_dim     = mil_cfg.get("hidden_dim", 256)
-    dropout        = mil_cfg.get("dropout", 0.25)
-    k_sample       = mil_cfg.get("k_sample", 8)
-    # proj_dim: HPO writes mil.proj_dim; legacy key is mil.feature_proj_dim
-    proj_dim       = int(mil_cfg.get("proj_dim",
-                         mil_cfg.get("feature_proj_dim", 512)))
-    label_names    = ml_cfg.get("label_names", [])
-    n_labels       = len(label_names)
-    threshold      = float(ml_cfg.get("threshold", 0.5))
+    model_key     = mil_cfg.get("model", "abmil").lower().strip()
+    encoding_size = mil_cfg.get("encoding_size", 1024)
+    hidden_dim    = mil_cfg.get("hidden_dim", 256)
+    dropout       = mil_cfg.get("dropout", 0.25)
+    k_sample      = mil_cfg.get("k_sample", 8)
+    proj_dim      = int(mil_cfg.get("proj_dim",
+                        mil_cfg.get("feature_proj_dim", 512)))
+    label_names   = ml_cfg.get("label_names", [])
+    n_labels      = len(label_names)
+    threshold     = float(ml_cfg.get("threshold", 0.5))
 
     if model_key not in _ML_MODEL_REGISTRY:
         raise ValueError(
@@ -330,13 +311,13 @@ def build_multilabel_model(config: dict) -> Tuple[nn.Module, int]:
             "multilabel.label_names must contain at least one label name.")
 
     model = _ML_MODEL_REGISTRY[model_key](
-        encoding_size   = encoding_size,
-        n_labels        = n_labels,
-        hidden_dim      = hidden_dim,
-        dropout         = dropout,
-        k_sample        = k_sample,
-        threshold       = threshold,
-        proj_dim        = proj_dim,    # consistent key — no more feature_proj_dim
+        encoding_size = encoding_size,
+        n_labels      = n_labels,
+        hidden_dim    = hidden_dim,
+        dropout       = dropout,
+        k_sample      = k_sample,
+        threshold     = threshold,
+        proj_dim      = proj_dim,
     )
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -344,5 +325,4 @@ def build_multilabel_model(config: dict) -> Tuple[nn.Module, int]:
 
 
 def ml_has_attention(model: nn.Module) -> bool:
-    """True if the model produces per-patch attention scores."""
     return isinstance(model, (MLABMIL, MLCLAM_SB, MLCLAM_MB, MLDSMIL))
