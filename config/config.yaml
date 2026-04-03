@@ -7,7 +7,7 @@
 
 paths:
   # Directory containing raw WSI files
-  slides_dir: "/lustre/naffi/point_mutation/single_slides_datas"
+  slides_dir: "/lustre/naffi/gastric_svs_files"
   
   # Directory containing manual annotations (optional)
   annotations_dir: "dataset/annotations"
@@ -249,7 +249,8 @@ hpo:
   # Set a key to null to keep the value from config.yaml fixed (not tuned).
   # For range parameters: [low, high].  For categorical: [choice1, choice2, ...]
   search_space:
-    # model:               [abmil, clam_sb, clam_mb, mean_pool, transmil, dsmil]
+    #clam_sb not working
+    # model:               [abmil, clam_mb, mean_pool, transmil, dsmil]
     model:               [abmil]
     optimizer:           [AdamW, Adam]
     learning_rate:       [1.0e-4, 2.0e-3]     # log-uniform
