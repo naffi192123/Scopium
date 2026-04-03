@@ -7,12 +7,13 @@
 3. [Configuration](#configuration)
 4. [Preprocessing Pipeline](#preprocessing-pipeline)
 5. [Single-Label MIL Pipeline](#single-label-mil-pipeline)
-6. [Hyperparameter Reference](#hyperparameter-reference)
-7. [Hyperparameter Optimisation (HPO)](#hyperparameter-optimisation-hpo)
-8. [Cross-Validation](#cross-validation)
-9. [Multi-Label MIL Pipeline](#multi-label-mil-pipeline)
-10. [Feature Directory Selection](#feature-directory-selection)
-11. [Results Directory Structure](#results-directory-structure)
+6. [Patch-Level Classifier Pipeline](#patch-level-classifier-pipeline)
+7. [Hyperparameter Reference](#hyperparameter-reference)
+8. [Hyperparameter Optimisation (HPO)](#hyperparameter-optimisation-hpo)
+9. [Cross-Validation](#cross-validation)
+10. [Multi-Label MIL Pipeline](#multi-label-mil-pipeline)
+11. [Feature Directory Selection](#feature-directory-selection)
+12. [Results Directory Structure](#results-directory-structure)
 
 ---
 
@@ -238,6 +239,179 @@ python main.py heatmap --config config/config.yaml
 Overlays per-patch attention weights on the WSI thumbnail (supported: `abmil`, `clam_sb`, `clam_mb`, `dsmil`).
 
 ---
+
+## Patch-Level Classifier Pipeline
+
+The `classify` → `classify-heatmap` pipeline performs **patch-level tissue classification** using a pretrained patch classifier checkpoint. It is a prerequisite for supplying tissue-specific feature directories (e.g. containing only tumour patches) to any downstream MIL pipeline.
+
+> **Typical use-case:** Train an NCT-CRC-style 8-class patch classifier independently, then apply it here to isolate `TUM` or `STR` patches, creating `patch512_step512_level0__optimus__TUM/` as a feature directory for MIL.
+
+### Step 6 — Patch Inference (`classify`)
+
+```bash
+# Classify all slides in the active feature directory
+python main.py classify --config config/config.yaml
+
+# Override feature directory (full pipeline output from extract)
+python main.py classify --config config/config.yaml \
+    --features patch512_step512_level0__optimus
+```
+
+**What it does:**
+1. Loads a pretrained classifier from `patch_classifier.checkpoint_path`.
+2. Iterates over every feature file (`.h5` or `.pt`) in the active feature directory.
+3. Runs batched softmax inference over all N patches in each slide.
+4. Writes one **prediction CSV** per slide containing coordinates, predicted label, confidence, and per-class probabilities.
+5. For each category listed in `filter_categories`, writes a new **filtered feature directory** (`/features/<subfolder>__<CATEGORY>/`) containing only the patches that belong to that tissue class.
+
+**Config:**
+
+```yaml
+patch_classifier:
+  checkpoint_path: "outputs/checkpoints/BEST_MODEL.pth"  # required
+  batch_size: 512         # GPU batch size for inference
+  input_format: h5        # 'h5' (preferred — includes coords) or 'pt'
+  filter_categories:      # tissue classes to save as filtered feature dirs
+    - TUM                 # colorectal adenocarcinoma
+    - STR                 # cancer-associated stroma
+                          # omit or set to null to skip filtered outputs
+```
+
+> If `input_format: h5` is requested but only `pt_files/` exists (or vice versa), the pipeline auto-detects the available format and logs a notice.
+
+**Prediction CSV columns:**
+
+| Column | Description |
+|---|---|
+| `coord_x` | Patch x-coordinate at level 0 |
+| `coord_y` | Patch y-coordinate at level 0 |
+| `predicted_label` | Winning tissue class (e.g. `TUM`) |
+| `confidence` | Max softmax probability |
+| `ADI`, `DEB`, `LYM`, `MUC`, `MUS`, `NOR`, `STR`, `TUM` | Per-class softmax probability |
+
+**Outputs:**
+
+```
+results/
+├── patch_predictions/<feat_subfolder>/
+│   ├── <slide_id>.csv           ← per-patch predictions (one row per patch)
+│   └── <slide_id>.csv ...       ← one file per slide
+│
+└── features/<feat_subfolder>__TUM/
+    ├── h5_files/<slide_id>.h5   ← (M, D) features + (M, 2) coords for TUM patches
+    └── pt_files/<slide_id>.pt   ← FloatTensor (M, D) for TUM patches
+```
+
+Where `M ≤ N` is the patch count for that tissue category.
+
+**Supported tissue categories (NCT-CRC palette):**
+
+| Code | Tissue Type |
+|---|---|
+| `ADI` | Adipose tissue |
+| `DEB` | Debris / necrosis |
+| `LYM` | Lymphocytes / immune infiltration |
+| `MUC` | Mucus |
+| `MUS` | Smooth muscle |
+| `NOR` | Normal colon mucosa |
+| `STR` | Cancer-associated stroma |
+| `TUM` | Colorectal adenocarcinoma (tumour) |
+
+### Step 7 — Tile Prediction Heatmaps (`classify-heatmap`)
+
+```bash
+# All slides, all categories
+python main.py classify-heatmap --config config/config.yaml
+
+# Single slide only
+python main.py classify-heatmap --config config/config.yaml --slide CMU-1
+
+# Override feature directory
+python main.py classify-heatmap --config config/config.yaml \
+    --features patch512_step512_level0__optimus
+```
+
+> **Prerequisites:** Run `classify` first. The heatmap pipeline reads the prediction CSVs and the original WSI files.
+
+**What it does:**
+For every selected slide, opens the WSI, reads its prediction CSV, and alpha-blends a per-patch colour overlay onto the WSI thumbnail at the best available pyramid level.
+
+**Visualisation modes:**
+
+| Mode | `category_map` | `confidence` |
+|---|---|---|
+| **Tile colour** | Fixed class colour (TUM=red, STR=blue, …) | Jet colour scale: red=high, blue=low confidence |
+| **Overlay** | All patches from selected categories | All patches, one image per category |
+| **Legend** | Colour-coded legend strip appended below | Jet colour bar appended to the right |
+| **Extras** | — | Top-K highest-confidence patch crops saved |
+
+**Config:**
+
+```yaml
+patch_classifier:
+  heatmap:
+    slides: all              # all | "CMU-1" | [CMU-1, CMU-2]
+    categories: all          # all | "TUM"   | [TUM, STR, LYM]
+    mode: category_map       # category_map | confidence
+    alpha: 0.50              # overlay opacity: 0.0 = transparent, 1.0 = opaque
+    top_k_tiles: 10          # number of top-K tile crops to save (confidence mode only)
+```
+
+**Category colour palette:**
+
+| Category | Colour |
+|---|---|
+| `ADI` | Tan `(210, 180, 140)` |
+| `DEB` | Grey `(160, 160, 160)` |
+| `LYM` | Purple `(170, 80, 200)` |
+| `MUC` | Teal `(60, 190, 170)` |
+| `MUS` | Orange `(220, 130, 50)` |
+| `NOR` | Green `(80, 180, 80)` |
+| `STR` | Blue `(70, 120, 220)` |
+| `TUM` | Red `(210, 50, 50)` |
+
+**Outputs:**
+
+```
+results/patch_predictions/<feat_subfolder>/heatmaps/
+└── <slide_id>/
+    ├── <slide_id>_category_map.png         ← category_map mode: all selected classes
+    ├── <slide_id>_confidence_TUM.png        ← confidence mode: one PNG per category
+    ├── <slide_id>_confidence_STR.png
+    └── top10_TUM/
+        ├── 01_<slide_id>_x256_y512_conf0.987.png
+        ├── 02_<slide_id>_x768_y1024_conf0.973.png
+        └── ...                               ← top-K crops at level-0 resolution
+```
+
+### End-to-End Classify Workflow
+
+```bash
+# 1. Extract patch features for all tissue
+python main.py extract --config config/config.yaml
+
+# 2. Run patch-level classifier inference
+#    → creates prediction CSVs and filtered feature directories
+python main.py classify --config config/config.yaml \
+    --features patch512_step512_level0__optimus
+
+# 3. Visualise tissue predictions on WSI thumbnails
+python main.py classify-heatmap --config config/config.yaml \
+    --features patch512_step512_level0__optimus
+
+# 4. Train MIL using only tumour-enriched features
+python main.py split --config config/config.yaml
+python main.py train   --config config/config.yaml \
+    --features patch512_step512_level0__optimus__TUM
+
+# 5. HPO on tumour features
+python main.py hpo     --config config/config.yaml \
+    --features patch512_step512_level0__optimus__TUM
+
+# 6. Cross-validate with best config
+python main.py crossval --config config/config.yaml --use_best_config \
+    --features patch512_step512_level0__optimus__TUM
+```
 
 ## Hyperparameter Reference
 
@@ -604,6 +778,14 @@ results/
 │   ├── best_config.yaml
 │   ├── hpo_results.csv
 │   └── study.db
+│
+├── patch_predictions/<feat_subfolder>/       ← classify output
+│   ├── <slide_id>.csv                        ← per-patch predictions
+│   └── heatmaps/<slide_id>/
+│       ├── <slide_id>_category_map.png       ← category_map mode
+│       ├── <slide_id>_confidence_TUM.png     ← confidence mode
+│       └── top10_TUM/
+│           └── 01_<slide_id>_x256_y512_conf0.987.png
 │
 ├── crossval/<task>/<model>__<feat>__<ts>/   ← unique per run
 │   ├── experiment_info.json
