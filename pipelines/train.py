@@ -281,16 +281,18 @@ def command_train(config: dict, dirs_dict: dict, log=None):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     _log.info(f"Training device: {device}")
 
+    # ── Config subsets ─────────────────────────────────────────────────────────
+    train_cfg = config.get('training', {})
+    nw        = int(train_cfg.get('num_workers', 0))
+
     # ── Datasets ───────────────────────────────────────────────────────────────
     datasets, class_names = build_mil_datasets(
         config, dirs_dict,
         max_patches=int(train_cfg.get('max_patches')) if train_cfg.get('max_patches') else None)
+
     if 'train' not in datasets:
         _log.error("No train.csv split found. Run: python main.py split --config ...")
         return
-
-    train_cfg = config.get('training', {})
-    nw        = int(train_cfg.get('num_workers', 0))
 
     # Guard: raise a clear error if the training dataset is empty (0 valid bags).
     # This almost always means features haven't been extracted yet, or the wrong
