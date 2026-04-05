@@ -86,10 +86,99 @@ feature_extraction:
   # Resizes raw extracted patch before feeding to model (set to -1 to disable)
   target_patch_size: -1
 
-  # Transform preset to apply before feature extraction.
-  # 'auto' selects the canonical pipeline for the chosen model.
-  # Other options: none, reinhard, macenko, uni_default, gigapath_default, etc.
+  # ── Transform pipeline ───────────────────────────────────────────────────────
+  #
+  # Controls how raw patches are preprocessed before being fed to the feature
+  # extractor.  Supports two syntaxes:
+  #
+  # ┌─────────────────────────────────────────────────────────────────────────┐
+  # │  SYNTAX 1 — single preset (original behaviour)                         │
+  # │                                                                         │
+  # │  transforms: auto              ← canonical preset for the chosen model  │
+  # │  transforms: optimus_default   ← named preset                           │
+  # │  transforms: reinhard          ← stain normalisation only               │
+  # │  transforms: none              ← ToTensor + ImageNet normalisation       │
+  # └─────────────────────────────────────────────────────────────────────────┘
+  #
+  # ┌─────────────────────────────────────────────────────────────────────────┐
+  # │  SYNTAX 2 — sequential cascade (ordered list of steps)                 │
+  # │                                                                         │
+  # │  transforms:                                                            │
+  # │    - reinhard            # Step 1: H&E colour normalisation             │
+  # │    - optimus_default     # Step 2: model crop + channel normalise       │
+  # │                                                                         │
+  # │  The cascade applies steps in order.  The FIRST step converts the PIL   │
+  # │  patch to a float32 Tensor [0,1].  Every SUBSEQUENT step receives and   │
+  # │  returns a float32 Tensor and must NOT include its own ToTensor.        │
+  # │  torchvision spatial ops (Resize, CenterCrop) accept Tensor input so   │
+  # │  spatial pre-ops from step 2+ work correctly.                           │
+  # └─────────────────────────────────────────────────────────────────────────┘
+  #
+  # ── Available single-step presets ────────────────────────────────────────────
+  #
+  # CATEGORY           NAME                    DESCRIPTION
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Auto               auto                     Canonical preset for your model
+  # Standard           none / imagenet          ToTensor + ImageNet norm
+  #
+  # Stain norm         reinhard                 Reinhard H&E colour normalisation
+  #                    macenko                  Macenko stain separation + norm
+  #
+  # Foundation models  optimus_default          CenterCrop(224) + Optimus stats
+  #                    uni_default              Resize(224) + ImageNet norm
+  #                    gigapath_default         Resize(256)+CenterCrop(224)+IN norm
+  #                    hibou_default            Resize+CenterCrop(224)+Hibou norm
+  #                    kaiko_default            Resize+CenterCrop(224)+Kaiko norm
+  #                    gpfm_default             Resize(224,224)+ImageNet norm
+  #                    resnet50lunit_default     Lunit norm (no resize)
+  #                    vitslunit_default        Resize(224)+Lunit norm
+  #                    histo_resnet18           Half norm (mean/std=0.5)
+  #                    histo_resnet18_224       Resize(224)+Half norm
+  #
+  # Spatial building   resize_224               Resize(224) only
+  # blocks             resize_256_crop_224      Resize(256)+CenterCrop(224)
+  #                    centercrop_224           CenterCrop(224) only
+  #
+  # Normalise only     imagenet_norm            ImageNet channel normalisation
+  #                    optimus_norm             Optimus channel normalisation
+  #                    hibou_norm               Hibou channel normalisation
+  #                    kaiko_norm               Kaiko channel normalisation
+  #                    lunit_norm               Lunit channel normalisation
+  #                    half_norm                Mean/std=0.5 normalisation
+  #
+  # Augmentation       colourjitter             ColorJitter + ToTensor
+  #                    colourjitternorm         ColorJitter + ToTensor + IN norm
+  #                    spatial                  Flip+Affine+IN norm (on Tensor)
+  #                    all                      ColourJitter+Flip+Affine+IN norm
+  #
+  # ── Cascade recipes ──────────────────────────────────────────────────────────
+  #
+  # -- H&E normalisation → Optimus (recommended for colorectal H&E slides) ----
+  # transforms:
+  #   - reinhard
+  #   - optimus_default
+  #
+  # -- Macenko → UNI ──────────────────────────────────────────────────────────
+  # transforms:
+  #   - macenko
+  #   - uni_default
+  #
+  # -- Resize first, then stain normalise, then Optimus channel stats ──────────
+  # transforms:
+  #   - resize_224           # Step 1: spatial resize on PIL
+  #   - reinhard             # Step 2: stain normalise on Tensor
+  #   - optimus_norm         # Step 3: channel normalise on Tensor
+  #
+  # -- Colour jitter augmentation + H&E norm + model normalisation ────────────
+  # transforms:
+  #   - colourjitter         # Step 1: colour augmentation on PIL → Tensor
+  #   - reinhard             # Step 2: stain normalise on Tensor
+  #   - optimus_norm         # Step 3: channel normalise on Tensor
+  #
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Active setting (change to any single preset name or list of steps above):
   transforms: auto
+
 
   # ── Feature subfolder override ────────────────────────────────────────────────
   # Five resolution tiers (highest priority first):

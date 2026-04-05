@@ -157,8 +157,8 @@ feature_extraction:
   num_extraction_workers: 4   # one process per GPU
   dataloader_workers: 4
   use_amp: true
-  target_patch_size: -1   # -1 = no resize
-  transforms: auto
+  target_patch_size: -1       # -1 = no resize before transform
+  transforms: auto            # see Transform Pipeline section below
 ```
 
 **Encoder output dimensions:**
@@ -174,7 +174,104 @@ feature_extraction:
 
 > Always set `mil.encoding_size` to match the encoder you used.
 
+#### Transform Pipeline
+
+The `transforms` key controls **how raw patches are preprocessed** before being fed to the feature extractor. Two syntaxes are supported:
+
+**Syntax 1 — single preset** (original behaviour):
+
+```yaml
+feature_extraction:
+  transforms: auto              # canonical preset for the chosen model (recommended)
+  # transforms: optimus_default # named preset
+  # transforms: reinhard        # stain normalisation only, then auto model norm
+  # transforms: none            # minimal: ToTensor + ImageNet normalisation
+```
+
+**Syntax 2 — sequential cascade** (new):
+
+```yaml
+feature_extraction:
+  transforms:
+    - reinhard           # Step 1: H&E colour normalisation
+    - optimus_default    # Step 2: model-specific crop + channel normalise
+```
+
+The cascade applies steps **in order**. The first step converts the raw PIL patch to a `float32` tensor `[0, 1]`. Every subsequent step receives and returns a tensor — spatial ops (Resize, CenterCrop) from step 2+ work because modern torchvision ops accept both PIL and Tensor inputs.
+
+**Tensor data flow:**
+
+```
+Raw PIL patch
+    │
+    ├─ Step 1  (pre_ops on PIL) → ToTensor → (post_ops on Tensor)
+    │          e.g. CenterCrop(224)    →   float32 [0,1]   →   Reinhard()
+    │
+    ├─ Step 2  (pre_ops on Tensor) → (post_ops on Tensor)
+    │          e.g. Resize(224)     →   Normalize(optimus_stats)
+    │
+    └─ → float32 Tensor ready for model
+```
+
+**Available steps:**
+
+| Category | Step name | Operations |
+|---|---|---|
+| **Auto** | `auto` | Canonical preset for chosen model |
+| **Standard** | `none` / `imagenet` | ToTensor + ImageNet norm |
+| **Stain norm** | `reinhard` | Reinhard H&E colour normalisation |
+| | `macenko` | Macenko stain separation + normalisation |
+| **Foundation models** | `optimus_default` | CenterCrop(224) + Optimus channel norm |
+| | `uni_default` | Resize(224) + ImageNet norm |
+| | `gigapath_default` | Resize(256) + CenterCrop(224) + ImageNet norm |
+| | `hibou_default` | Resize+CenterCrop(224) + Hibou norm |
+| | `kaiko_default` | Resize+CenterCrop(224) + Kaiko norm |
+| | `gpfm_default` | Resize(224,224) + ImageNet norm |
+| | `resnet50lunit_default` | Lunit norm (no resize) |
+| | `vitslunit_default` | Resize(224) + Lunit norm |
+| | `histo_resnet18` | Half norm (mean=std=0.5) |
+| **Spatial blocks** | `resize_224` | Resize(224) only |
+| | `resize_256_crop_224` | Resize(256) + CenterCrop(224) |
+| | `centercrop_224` | CenterCrop(224) only |
+| **Norm only** | `imagenet_norm` | ImageNet channel normalisation |
+| | `optimus_norm` | Optimus channel normalisation |
+| | `hibou_norm` | Hibou channel normalisation |
+| | `lunit_norm` | Lunit channel normalisation |
+| | `half_norm` | Mean/std=0.5 normalisation |
+| **Augmentation** | `colourjitter` | ColorJitter |
+| | `colourjitternorm` | ColorJitter + ImageNet norm |
+| | `spatial` | Flip + Affine + ImageNet norm |
+
+**Common cascade recipes:**
+
+```yaml
+# H&E normalisation → Optimus  (recommended for colorectal H&E slides)
+transforms:
+  - reinhard
+  - optimus_default
+
+# Macenko → UNI
+transforms:
+  - macenko
+  - uni_default
+
+# Resize → stain normalise → channel normalise (fine-grained control)
+transforms:
+  - resize_224        # Step 1: spatial resize on PIL
+  - reinhard          # Step 2: stain normalise (tensor)
+  - optimus_norm      # Step 3: channel normalise (tensor)
+
+# Augmentation + stain normalise + channel normalise
+transforms:
+  - colourjitter      # Step 1: colour augmentation (PIL)
+  - reinhard          # Step 2: H&E normalisation (tensor)
+  - optimus_norm      # Step 3: channel normalise (tensor)
+```
+
+> **Note:** `reinhard` and `macenko` require `pip install torchstain`. They are skipped at import time — the error is raised only when the step is actually built.
+
 ---
+
 
 ## Single-Label MIL Pipeline
 

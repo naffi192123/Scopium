@@ -156,6 +156,86 @@ Set via `mil.model` in `config.yaml`:
 
 ---
 
+## Transform Pipeline
+
+The `feature_extraction.transforms` config key controls how raw patches are preprocessed before the feature encoder. Two syntaxes are supported.
+
+### Syntax 1 — Single preset
+
+```yaml
+feature_extraction:
+  transforms: auto              # recommended: picks the right preset for your model
+  # transforms: reinhard        # Reinhard H&E stain normalisation
+  # transforms: optimus_default # explicit model preset
+  # transforms: none            # minimal: ToTensor + ImageNet norm
+```
+
+### Syntax 2 — Sequential cascade (list)
+
+```yaml
+feature_extraction:
+  transforms:
+    - reinhard           # Step 1: H&E colour normalisation  (PIL → Tensor)
+    - optimus_default    # Step 2: spatial crop + channel normalise (Tensor → Tensor)
+```
+
+Steps are applied **in order**. The first step converts the PIL patch to a `float32` tensor in `[0, 1]`. All subsequent steps operate on that tensor — including spatial ops like `Resize` and `CenterCrop`, which modern torchvision accepts on both PIL and Tensor.
+
+### Common cascade recipes
+
+```yaml
+# H&E normalisation → Optimus  (recommended for colorectal H&E)
+transforms:
+  - reinhard
+  - optimus_default
+
+# Macenko stain separation → UNI
+transforms:
+  - macenko
+  - uni_default
+
+# Explicit 3-step: resize → stain normalise → channel normalise
+transforms:
+  - resize_224          # spatial resize on PIL
+  - reinhard            # colour normalise on Tensor
+  - optimus_norm        # channel stats on Tensor
+
+# Augmentation → H&E norm → channel stats
+transforms:
+  - colourjitter        # colour augmentation
+  - reinhard            # stain normalise
+  - optimus_norm        # channel normalise
+```
+
+### Available steps
+
+| Category | Step | Operations |
+|---|---|---|
+| Auto | `auto` | Canonical preset for chosen model |
+| Standard | `none` / `imagenet` | ToTensor + ImageNet norm |
+| Stain norm | `reinhard` | Reinhard H&E colour normalisation |
+| | `macenko` | Macenko stain separation + normalisation |
+| Foundation | `optimus_default` | CenterCrop(224) + Optimus stats |
+| | `uni_default` | Resize(224) + ImageNet norm |
+| | `gigapath_default` | Resize(256) + CenterCrop(224) + ImageNet norm |
+| | `hibou_default` | Resize + CenterCrop(224) + Hibou stats |
+| | `kaiko_default` | Resize + CenterCrop(224) + Kaiko stats |
+| | `gpfm_default` | Resize(224,224) + ImageNet norm |
+| Spatial | `resize_224` | Resize(224) only |
+| | `centercrop_224` | CenterCrop(224) only |
+| | `resize_256_crop_224` | Resize(256) + CenterCrop(224) |
+| Norm only | `imagenet_norm` | ImageNet stats |
+| | `optimus_norm` | Optimus stats |
+| | `hibou_norm` | Hibou stats |
+| | `lunit_norm` | Lunit stats |
+| | `half_norm` | mean=std=0.5 |
+| Augmentation | `colourjitter` | ColorJitter |
+| | `spatial` | Flip + Affine + ImageNet norm |
+
+> `reinhard` and `macenko` require `pip install torchstain`.
+
+
+
 ## Key Configuration Options
 
 ### Single-Label
