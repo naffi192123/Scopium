@@ -33,14 +33,14 @@ segmentation:
 filter:
   a_t: 100              # Min tissue contour area (in ref-patch units)
   a_h: 16               # Min hole area to keep (in ref-patch units)
-  max_n_holes: 8        # Max holes per tissue contour
-  ref_patch_size: 512   # Reference patch size used for area scaling
+  max_n_holes: 20        # Max holes per tissue contour
+  ref_patch_size: 256   # Reference patch size used for area scaling
 
 # ─── Patch Tiling ────────────────────────────────────────────────────────────
 tiling:
   patch_level: 0        # Pyramid level to extract patches from (0 = full res)
-  patch_size: 512     # Patch width/height in pixels
-  step_size: 512       # Step size between patches (= patch_size for no overlap)
+  patch_size: 256     # Patch width/height in pixels
+  step_size: 256       # Step size between patches (= patch_size for no overlap)
   contour_fn: "four_pt" # Contour check: four_pt | four_pt_hard | center | basic
   use_padding: true     # Allow patches that extend beyond the bounding box edge
   filter_blank: true    # Skip white/black (background) patches
@@ -177,7 +177,9 @@ feature_extraction:
   #
   # ─────────────────────────────────────────────────────────────────────────────
   # Active setting (change to any single preset name or list of steps above):
-  transforms: auto
+  transforms:
+    - reinhard
+    - optimus_default
 
 
   # ── Feature subfolder override ────────────────────────────────────────────────

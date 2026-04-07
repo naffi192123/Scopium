@@ -46,7 +46,20 @@ from torchvision import transforms
 
 # ---------------------------------------------------------------------------
 # Module-level normaliser classes  (picklable — no local class defs)
+#
+# IMPORTANT: ALL callables placed inside transforms.Compose / transforms.Lambda
+# MUST be defined at module scope (not inside functions or as lambdas) so that
+# Python's pickle can serialise them across mp.spawn worker processes.
 # ---------------------------------------------------------------------------
+
+
+class _ScaleTo255:
+    """Multiply a float32 tensor by 255.  Module-level so pickle can serialise it."""
+    def __call__(self, x: 'torch.Tensor') -> 'torch.Tensor':
+        return x * 255.0
+
+    def __repr__(self) -> str:
+        return 'ScaleTo255()'
 
 class ReinhardNorm:
     """Reinhard colour normalisation (torchstain PyTorch backend)."""
@@ -276,14 +289,15 @@ def _get_step(name: str) -> tuple:
 
     # Lazy resolution for stain normalisers (require torchstain — not installed everywhere)
     if entry is _STAIN_SENTINEL:
+        # _ScaleTo255() is module-level → picklable across mp.spawn workers
         if key == 'reinhard':
             return ([], [
-                transforms.Lambda(lambda x: x * 255.0),
+                transforms.Lambda(_ScaleTo255()),
                 ReinhardNorm(),        # raises ImportError if torchstain absent
             ])
         if key == 'macenko':
             return ([], [
-                transforms.Lambda(lambda x: x * 255.0),
+                transforms.Lambda(_ScaleTo255()),
                 MacenkoNorm(),
             ])
 
